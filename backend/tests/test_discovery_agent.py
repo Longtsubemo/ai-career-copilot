@@ -19,6 +19,7 @@ from app.agents.discovery import (
     DiscoveryAgent,
     DiscoveryInputError,
     DiscoveryRequest,
+    RoleMatch,
     build_search_query,
     discovery_idempotency_key,
     extract_job,
@@ -27,10 +28,11 @@ from app.agents.discovery import (
 )
 from app.agents.discovery.extract import ExtractedJob, parse_year_range
 from app.agents.runtime import HandlerRegistry, RunContext
+from app.clients.firecrawl import FirecrawlError
 from app.clients.searxng import SearXNGError
 from app.models.agent_run import AgentRun
 from app.models.company import Company
-from app.models.enums import CrawlStatus, RunStatus
+from app.models.enums import AvailabilityStatus, CrawlStatus, RunStatus
 from app.models.job import Job
 from app.services.normalization import canonicalize_url, normalize_company_name
 from tests.fake_clients import (
@@ -108,6 +110,10 @@ def assert_invariant(output: dict) -> None:
         + output["listings_skipped"]
         + output["invalid_results"]
         == output["candidates_found"]
+    )
+    assert (
+        output["extractions_succeeded"] + output["scrape_failures"]
+        == output["scrape_attempts"]
     )
 
 
@@ -275,26 +281,66 @@ class TestFiltering:
 
     @pytest.mark.parametrize(
         "title",
-        ["AI Engineer", "Senior AI Engineer", "Engineer", "Machine Learning Engineer"],
+        [
+            "AI Engineer",
+            "Senior AI Engineer",
+            "Artificial Intelligence Engineer",
+            "AI Platform Engineer",
+        ],
     )
-    def test_role_accepts_any_overlapping_token(self, title: str) -> None:
-        assert filter_check(REQUEST, self.make(title=title)).accepted
+    def test_role_accepts_title_variants_in_the_same_family(self, title: str) -> None:
+        decision = filter_check(REQUEST, self.make(title=title))
+        assert decision.accepted
+        assert decision.role_match is RoleMatch.exact
 
-    @pytest.mark.parametrize("title", ["Data Scientist", "Product Manager"])
-    def test_role_rejects_titles_without_overlap(self, title: str) -> None:
+    @pytest.mark.parametrize(
+        "title", ["Machine Learning Engineer", "ML Engineer", "LLM Engineer"]
+    )
+    def test_role_accepts_related_family_titles_as_related(self, title: str) -> None:
+        decision = filter_check(REQUEST, self.make(title=title))
+        assert decision.accepted
+        assert decision.role_match is RoleMatch.related
+        assert "related role family" in (decision.reason or "")
+
+    @pytest.mark.parametrize(
+        "title", ["Engineer", "Data Scientist", "Product Manager"]
+    )
+    def test_role_rejects_titles_without_the_family_signal(self, title: str) -> None:
         decision = filter_check(REQUEST, self.make(title=title))
         assert not decision.accepted
-        assert "matches none of" in (decision.reason or "")
+        assert "role signal" in (decision.reason or "")
+
+    def test_role_outside_the_taxonomy_falls_back_to_token_overlap(self) -> None:
+        request = DiscoveryRequest(
+            role="Data Scientist", location="Bangalore", experience="1-3 years"
+        )
+        accepted = filter_check(
+            request, self.make(title="Senior Data Scientist")
+        )
+        rejected = filter_check(request, self.make(title="Product Manager"))
+
+        assert accepted.accepted
+        assert accepted.role_match is None
+        assert not rejected.accepted
+        assert "matches none of" in (rejected.reason or "")
 
     @pytest.mark.parametrize(
-        "location", ["Bangalore", "Bangalore, India", "Bangalore Urban, Karnataka"]
+        "location",
+        [
+            "Bangalore",
+            "Bangalore, India",
+            "Bangalore Urban, Karnataka",
+            "Bengaluru",
+            "Bengaluru Urban, Karnataka",
+            "BENGALURU, INDIA",
+        ],
     )
-    def test_location_accepts_overlapping_places(self, location: str) -> None:
+    def test_location_accepts_overlapping_places_and_aliases(
+        self, location: str
+    ) -> None:
         assert filter_check(REQUEST, self.make(location=location)).accepted
 
-    @pytest.mark.parametrize(
-        "location", ["Mumbai", "Bengaluru Urban, Karnataka"]
-    )
+    @pytest.mark.parametrize("location", ["Mumbai", "Pune, India"])
     def test_location_rejects_disjoint_places(self, location: str) -> None:
         decision = filter_check(REQUEST, self.make(location=location))
         assert not decision.accepted
@@ -358,6 +404,8 @@ class TestRegistration:
         with pytest.raises(ValueError):
             make_agent(max_candidates=0)
         with pytest.raises(ValueError):
+            make_agent(max_queries=0)
+        with pytest.raises(ValueError):
             make_agent(source="")
 
 
@@ -374,7 +422,7 @@ class TestDiscoveryWithDatabase:
             "location": "Bangalore",
             "experience": "1-3 years",
         }
-        assert output["searched"] == 2
+        assert output["searched"] == 4
         assert output["candidates_found"] == 2
         assert output["jobs_created"] == 2
         assert output["jobs_updated"] == 0
@@ -384,7 +432,11 @@ class TestDiscoveryWithDatabase:
         assert_invariant(output)
         assert json.dumps(output, allow_nan=False)
 
-        assert searxng.queries == ["AI Engineer Bangalore jobs 1-3 years"]
+        assert output["queries"] == [
+            "AI Engineer Bangalore jobs 1-3 years",
+            "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+        ]
+        assert searxng.queries == output["queries"]
         assert firecrawl.requested == [URL_A, URL_B]
 
         job_a = get_job(session, URL_A)
@@ -462,6 +514,7 @@ class TestDiscoveryWithDatabase:
         assert job.crawl_status == CrawlStatus.failed
         assert job.crawled_at is None
         assert job.title == "AI Engineer"
+        assert job.description == "Build agents."
 
     def test_failed_recrawl_preserves_the_last_success_timestamp(
         self, session
@@ -484,6 +537,65 @@ class TestDiscoveryWithDatabase:
         assert job.crawl_status == CrawlStatus.failed
         assert job.crawled_at == T1
         assert job.last_seen_at == T2
+
+    def test_failed_recrawl_cannot_degrade_previously_crawled_content(
+        self, session
+    ) -> None:
+        first, _, _ = make_agent(HAPPY_RESULTS, HAPPY_PAGES, clock=lambda: T1)
+        first.discover(session, REQUEST)
+
+        tracking_url = f"{URL_A}?utm_source=indeed"
+        second, _, _ = make_agent(
+            [search_result(tracking_url, "Indeed AI Engineer jobs", "SEO snippet")],
+            {tracking_url: FirecrawlError("boom", kind="network_error")},
+            clock=lambda: T2,
+        )
+        output = second.discover(session, REQUEST)
+        session.expire_all()
+
+        assert output["jobs_created"] == 0
+        assert output["jobs_updated"] == 1
+        job = get_job(session, URL_A)
+        assert job.title == "Senior AI Engineer"
+        assert job.description == "Own the agent platform."
+        assert job.job_url == URL_A
+        assert job.location == "Bangalore"
+        assert job.employment_type == "Full-time"
+        assert job.availability is AvailabilityStatus.available
+        assert job.crawled_at == T1
+        assert job.crawl_status == CrawlStatus.failed
+        assert job.last_seen_at == T2
+
+    def test_successful_recrawl_refreshes_previously_crawled_content(
+        self, session
+    ) -> None:
+        first, _, _ = make_agent(HAPPY_RESULTS, HAPPY_PAGES, clock=lambda: T1)
+        first.discover(session, REQUEST)
+
+        refreshed = {
+            **HAPPY_PAGES,
+            URL_A: listing_page(
+                URL_A,
+                title="Staff AI Engineer",
+                description="Lead the agent platform.",
+                location="Bangalore",
+                company="Acme Inc.",
+                employment_type="Full-time",
+                experience="3-5 years",
+            ),
+        }
+        second, _, _ = make_agent(HAPPY_RESULTS, refreshed, clock=lambda: T2)
+        output = second.discover(session, REQUEST)
+        session.expire_all()
+
+        assert output["jobs_created"] == 0
+        assert output["jobs_updated"] == 2
+        job = get_job(session, URL_A)
+        assert job.title == "Staff AI Engineer"
+        assert job.description == "Lead the agent platform."
+        assert job.experience_level == "3-5 years"
+        assert job.crawl_status == CrawlStatus.scraped
+        assert job.crawled_at == T2
 
     def test_filter_rejections_are_counted_and_never_persisted(
         self, session
@@ -516,7 +628,7 @@ class TestDiscoveryWithDatabase:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["searched"] == 2
+        assert output["searched"] == 4
         assert output["candidates_found"] == 1
         assert output["jobs_skipped"] == 0
         assert any("malformed" in error for error in output["errors"])
@@ -535,7 +647,7 @@ class TestDiscoveryWithDatabase:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["searched"] == 2
+        assert output["searched"] == 4
         assert output["candidates_found"] == 1
         assert output["jobs_created"] == 1
         assert job_count(session, URL_A) == 1
@@ -569,6 +681,10 @@ class TestDiscoveryWithDatabase:
                 "location": "Bangalore",
                 "experience": "1-3 years",
             },
+            "queries": [
+                "AI Engineer Bangalore jobs 1-3 years",
+                "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+            ],
             "searched": 0,
             "candidates_found": 0,
             "jobs_created": 0,
@@ -596,6 +712,33 @@ class TestDiscoveryWithDatabase:
 
         assert job_count(session, URL_A) == 0
         assert job_count(session, URL_B) == 0
+
+    def test_single_query_mode_runs_only_the_primary_query(self, session) -> None:
+        agent, searxng, _ = make_agent(HAPPY_RESULTS, HAPPY_PAGES, max_queries=1)
+
+        output = agent.discover(session, REQUEST)
+
+        assert searxng.queries == ["AI Engineer Bangalore jobs 1-3 years"]
+        assert output["queries"] == ["AI Engineer Bangalore jobs 1-3 years"]
+        assert output["searched"] == 2
+        assert output["jobs_created"] == 2
+
+    def test_secondary_query_failure_is_recorded_and_the_run_continues(
+        self, session
+    ) -> None:
+        searxng = FakeSearXNGClient(
+            HAPPY_RESULTS, error=SearXNGError("boom"), fail_after=1
+        )
+        agent = DiscoveryAgent(
+            searxng, FakeFirecrawlClient(HAPPY_PAGES), clock=lambda: T1
+        )
+
+        output = agent.discover(session, REQUEST)
+
+        assert len(searxng.queries) == 2
+        assert output["jobs_created"] == 2
+        assert any("additional query" in error for error in output["errors"])
+        assert_invariant(output)
 
     def test_company_id_survives_when_a_later_page_omits_the_company(
         self, session
@@ -645,7 +788,7 @@ class TestDiscoveryWithDatabase:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["searched"] == 5
+        assert output["searched"] == 10
         assert output["candidates_found"] == 2
         assert len(firecrawl.requested) == 2
         assert_invariant(output)
@@ -684,7 +827,10 @@ class TestHandleContract:
             context,
         )
 
-        assert searxng.queries == ["AI Engineer Bangalore jobs 1-3 years"]
+        assert searxng.queries == [
+            "AI Engineer Bangalore jobs 1-3 years",
+            "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+        ]
         assert output["jobs_created"] == 2
         assert_invariant(output)
         assert json.dumps(output, allow_nan=False)

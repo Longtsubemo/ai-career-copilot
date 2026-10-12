@@ -133,13 +133,16 @@ def test_discovery_run_completes_and_stores_structured_output(
         "location": "Bangalore",
         "experience": "1-3 years",
     }
-    assert output["searched"] == 2
+    assert output["searched"] == 4
     assert output["jobs_created"] == 2
     assert output["jobs_updated"] == 0
     assert output["jobs_skipped"] == 0
     assert output["errors"] == []
     assert len(output["job_ids"]) == 2
-    assert searxng.queries == ["AI Engineer Bangalore jobs 1-3 years"]
+    assert searxng.queries == [
+        "AI Engineer Bangalore jobs 1-3 years",
+        "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+    ]
 
     persisted = session.scalar(
         select(func.count())

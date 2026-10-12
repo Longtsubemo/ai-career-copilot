@@ -148,7 +148,10 @@ def test_full_workflow_from_profile_to_application(client_factory, session):
         MatchResult,
         CoverLetterResult,
     ]
-    assert searxng.queries == ["AI Engineer Bangalore jobs 1-3 years"]
+    assert searxng.queries == [
+        "AI Engineer Bangalore jobs 1-3 years",
+        "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+    ]
 
 
 def test_rerunning_the_pipeline_changes_nothing(client_factory, session):
@@ -193,4 +196,4 @@ def test_rerunning_the_pipeline_changes_nothing(client_factory, session):
     assert _count(session, Match) == 1
     assert _count(session, Document) == 2
     assert len(gemini.calls) == 3
-    assert len(searxng.queries) == 1
+    assert len(searxng.queries) == 2

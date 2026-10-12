@@ -156,6 +156,7 @@ export interface DiscoveryIssue {
 
 export interface DiscoveryOutput {
   query: Record<string, string>;
+  queries: string[];
   searched: number;
   candidates_found: number;
   jobs_created: number;

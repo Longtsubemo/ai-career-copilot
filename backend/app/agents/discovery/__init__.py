@@ -26,11 +26,25 @@ from app.agents.discovery.extract import (
     filter_check,
     parse_posted_date,
 )
-from app.agents.discovery.query import build_search_query
+from app.agents.discovery.query import build_search_queries, build_search_query
+from app.agents.discovery.relevance import (
+    RELATED_ROLE_FAMILIES,
+    ROLE_ALIASES,
+    ROLE_FAMILIES,
+    RoleMatch,
+    location_matches,
+    normalize_location,
+    normalize_role,
+    related_families,
+    role_family,
+)
 
 __all__ = [
     "DISCOVERY_AGENT_NAME",
     "MAX_DISCOVERY_ISSUES",
+    "RELATED_ROLE_FAMILIES",
+    "ROLE_ALIASES",
+    "ROLE_FAMILIES",
     "DiscoveryAgent",
     "DiscoveryInputError",
     "DiscoveryIssue",
@@ -39,7 +53,9 @@ __all__ = [
     "DiscoveryResult",
     "ExtractedJob",
     "FilterDecision",
+    "RoleMatch",
     "UrlQuality",
+    "build_search_queries",
     "build_search_query",
     "classify_page",
     "classify_url",
@@ -48,7 +64,12 @@ __all__ = [
     "filter_check",
     "has_closure_evidence",
     "has_usable_content",
+    "location_matches",
+    "normalize_location",
+    "normalize_role",
     "parse_posted_date",
     "register_discovery_handler",
+    "related_families",
     "resolve_quality",
+    "role_family",
 ]

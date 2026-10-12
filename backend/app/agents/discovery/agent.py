@@ -6,8 +6,8 @@ retries, idempotency and state transitions stay with the runtime.
 
 Two strict phases keep database work away from external HTTP:
 
-* phase 1 — validate the request, call SearXNG, canonicalize and dedupe
-  candidate URLs (no database access at all);
+* phase 1 — validate the request, run the bounded query set through SearXNG,
+  canonicalize and dedupe candidate URLs (no database access at all);
 * phase 2 — crawl every candidate through Firecrawl and extract/filter
   locally (still no database access);
 * phase 3 — persist everything in one batch with PostgreSQL upserts on the
@@ -47,7 +47,7 @@ from app.agents.discovery.contract import (
     DiscoveryResult,
 )
 from app.agents.discovery.extract import ExtractedJob, extract_job, filter_check
-from app.agents.discovery.query import build_search_query
+from app.agents.discovery.query import build_search_queries
 from app.agents.runtime.context import RunContext
 from app.agents.runtime.registry import HandlerRegistry
 from app.agents.runtime.runtime import utc_now
@@ -166,9 +166,12 @@ class DiscoveryAgent:
         clock: Callable[[], datetime] = utc_now,
         source: str = "searxng",
         max_candidates: int = 10,
+        max_queries: int = 2,
     ) -> None:
         if max_candidates < 1:
             raise ValueError("max_candidates must be >= 1")
+        if max_queries < 1:
+            raise ValueError("max_queries must be >= 1")
         if not source:
             raise ValueError("source must not be empty")
         self._searxng = searxng
@@ -176,6 +179,7 @@ class DiscoveryAgent:
         self._clock = clock
         self._source = source
         self._max_candidates = max_candidates
+        self._max_queries = max_queries
 
     @property
     def source(self) -> str:
@@ -184,6 +188,10 @@ class DiscoveryAgent:
     @property
     def max_candidates(self) -> int:
         return self._max_candidates
+
+    @property
+    def max_queries(self) -> int:
+        return self._max_queries
 
     def handle(
         self, payload: dict | None, context: RunContext
@@ -195,24 +203,30 @@ class DiscoveryAgent:
     def discover(self, session: Session, request: DiscoveryRequest) -> dict:
         """Execute discovery and return the JSON-ready structured result.
 
-        The search phase raises :class:`SearXNGError` when the overall
-        operation genuinely cannot proceed, letting the runtime apply its
-        retry policy. Candidate-level failures (crawl errors, unusable
-        pages, malformed URLs) are recorded in ``errors`` and never abort
+        The bounded query set is run in order. A failure of the primary query
+        raises :class:`SearXNGError` when the operation genuinely cannot
+        proceed, letting the runtime apply its retry policy; a failure of an
+        additional query is recorded in ``errors`` and the run continues with
+        the results already gathered. Candidate-level failures (crawl errors,
+        unusable pages, malformed URLs) are likewise recorded and never abort
         the run.
         """
         errors: list[str] = []
         issues: list[DiscoveryIssue] = []
         counters = _Counters()
-        query = build_search_query(request)
+        queries = build_search_queries(request, max_queries=self._max_queries)
 
-        try:
-            results = self._searxng.search(query)
-        except SearXNGError:
-            logger.warning(
-                "discovery search failed for query %r", query, exc_info=True
-            )
-            raise
+        results: list[SearchResult] = []
+        for index, query in enumerate(queries):
+            try:
+                results.extend(self._searxng.search(query))
+            except SearXNGError:
+                logger.warning(
+                    "discovery search failed for query %r", query, exc_info=True
+                )
+                if index == 0:
+                    raise
+                errors.append(f"search failed for additional query {query!r}")
         searched = len(results)
 
         candidates = self._collect_candidates(results, errors, issues, counters)
@@ -256,6 +270,8 @@ class DiscoveryAgent:
                     status=outcome.status_code,
                     message=outcome.error,
                 )
+            elif outcome.scraped:
+                counters.extractions_succeeded += 1
 
             extracted = extract_job(candidate.result, outcome.crawl)
             decision = filter_check(request, extracted)
@@ -288,8 +304,6 @@ class DiscoveryAgent:
                 )
                 continue
 
-            if outcome.scraped:
-                counters.extractions_succeeded += 1
             plans.append(_Plan(candidate, extracted, outcome))
 
         created, updated, job_ids = self._persist(session, plans)
@@ -300,6 +314,7 @@ class DiscoveryAgent:
                 "location": request.location,
                 "experience": request.experience,
             },
+            queries=queries,
             searched=searched,
             candidates_found=len(candidates),
             jobs_created=created,
@@ -489,6 +504,16 @@ class DiscoveryAgent:
         success timestamp when the re-crawl failed). ``crawl_status``
         always records the latest attempt.
 
+        Vacancy content (title, description, location, employment type,
+        experience, company, outbound URL, source, date posted) is only
+        reconciled when the crawl succeeded and produced usable content.
+        After a failed or unusable crawl the previously extracted values are
+        left untouched — a search-result snippet is never treated as fresher
+        evidence than a real page — while the operational columns
+        (``crawl_status``, ``last_seen_at``, ``updated_at``) still record the
+        attempt. A brand-new row is always inserted from the search-derived
+        fields, so a first-seen job with a failed crawl still persists.
+
         Availability is only written when the crawl produced a credible
         verdict: a successful individual-page crawl sets ``available`` (or
         ``closed`` plus ``closed_at`` on affirmative closure evidence),
@@ -517,25 +542,6 @@ class DiscoveryAgent:
             updated_at=now,
         )
         set_: dict[str, object] = {
-            "title": func.coalesce(stmt.excluded.title, table.c.title),
-            "description": func.coalesce(
-                stmt.excluded.description, table.c.description
-            ),
-            "location": func.coalesce(stmt.excluded.location, table.c.location),
-            "employment_type": func.coalesce(
-                stmt.excluded.employment_type, table.c.employment_type
-            ),
-            "experience_level": func.coalesce(
-                stmt.excluded.experience_level, table.c.experience_level
-            ),
-            "company_id": func.coalesce(
-                stmt.excluded.company_id, table.c.company_id
-            ),
-            "job_url": func.coalesce(stmt.excluded.job_url, table.c.job_url),
-            "source": func.coalesce(stmt.excluded.source, table.c.source),
-            "date_posted": func.coalesce(
-                stmt.excluded.date_posted, table.c.date_posted
-            ),
             "crawl_status": stmt.excluded.crawl_status,
             "crawled_at": func.coalesce(
                 stmt.excluded.crawled_at, table.c.crawled_at
@@ -543,6 +549,34 @@ class DiscoveryAgent:
             "last_seen_at": stmt.excluded.last_seen_at,
             "updated_at": stmt.excluded.updated_at,
         }
+        if plan.outcome.scraped:
+            set_.update(
+                {
+                    "title": func.coalesce(stmt.excluded.title, table.c.title),
+                    "description": func.coalesce(
+                        stmt.excluded.description, table.c.description
+                    ),
+                    "location": func.coalesce(
+                        stmt.excluded.location, table.c.location
+                    ),
+                    "employment_type": func.coalesce(
+                        stmt.excluded.employment_type, table.c.employment_type
+                    ),
+                    "experience_level": func.coalesce(
+                        stmt.excluded.experience_level, table.c.experience_level
+                    ),
+                    "company_id": func.coalesce(
+                        stmt.excluded.company_id, table.c.company_id
+                    ),
+                    "job_url": func.coalesce(
+                        stmt.excluded.job_url, table.c.job_url
+                    ),
+                    "source": func.coalesce(stmt.excluded.source, table.c.source),
+                    "date_posted": func.coalesce(
+                        stmt.excluded.date_posted, table.c.date_posted
+                    ),
+                }
+            )
         if availability is AvailabilityStatus.closed:
             set_["availability"] = AvailabilityStatus.closed
             set_["closed_at"] = now
@@ -567,6 +601,7 @@ def register_discovery_handler(
     clock: Callable[[], datetime] = utc_now,
     source: str = "searxng",
     max_candidates: int = 10,
+    max_queries: int = 2,
     agent_name: str = DISCOVERY_AGENT_NAME,
 ) -> DiscoveryAgent:
     """Build a DiscoveryAgent and register its handler on ``registry``.
@@ -591,6 +626,7 @@ def register_discovery_handler(
         clock=clock,
         source=source,
         max_candidates=max_candidates,
+        max_queries=max_queries,
     )
     registry.register(agent_name, agent.handle)
     return agent

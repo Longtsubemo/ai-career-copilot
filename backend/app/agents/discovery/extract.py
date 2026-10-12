@@ -12,6 +12,12 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.agents.discovery.contract import DiscoveryRequest
+from app.agents.discovery.relevance import (
+    RoleMatch,
+    location_matches,
+    related_families,
+    role_family,
+)
 from app.clients.firecrawl import CrawlResult
 from app.clients.searxng import SearchResult
 
@@ -100,10 +106,19 @@ class ExtractedJob:
 
 @dataclass(frozen=True)
 class FilterDecision:
-    """Whether a candidate passes the deterministic request filters."""
+    """Whether a candidate passes the deterministic request filters.
+
+    ``role_match`` records why the title was accepted: ``exact`` for a title in
+    the requested role's own family (including its alias spellings) and
+    ``related`` when it belongs to a related but non-identical family. It is
+    ``None`` for the plain token-overlap fallback used by roles outside the
+    taxonomy. ``reason`` explains every rejection and the classification behind
+    a related-family acceptance.
+    """
 
     accepted: bool
     reason: str | None = None
+    role_match: RoleMatch | None = None
 
 
 def _clip(value: str | None, limit: int) -> str | None:
@@ -241,27 +256,54 @@ def _tokens(text: str) -> frozenset[str]:
 def filter_check(request: DiscoveryRequest, job: ExtractedJob) -> FilterDecision:
     """Apply the request's role, location and experience to one candidate.
 
-    Filtering stays intentionally simple: role tokens must appear in the
-    title, location tokens must overlap when both sides are present, and
-    experience year ranges must overlap when both sides parse. Fields the
-    source did not provide are never used to reject a candidate.
+    The role is resolved through the conservative taxonomy when the request
+    names a known family: a title in the same family (including its alias
+    spellings) is an exact match and a title in a related family is accepted
+    as related, while a title carrying no family signal or an unrelated family
+    is rejected. Roles outside the taxonomy fall back to the original token
+    overlap. Location is compared on normalized tokens so aliases such as
+    ``Bengaluru``/``Bangalore`` agree. Experience year ranges must overlap
+    when both sides parse. Fields the source did not provide are never used to
+    reject a candidate.
     """
-    role_tokens = frozenset(
-        token for token in _tokens(request.role) if token not in ROLE_STOPWORDS
-    )
-    if role_tokens and not (role_tokens & _tokens(job.title)):
-        missing = ", ".join(sorted(role_tokens))
-        return FilterDecision(
-            False, f"title {job.title!r} matches none of: {missing}"
-        )
-
-    if job.location:
-        request_tokens = _tokens(request.location)
-        if request_tokens and not (request_tokens & _tokens(job.location)):
+    matched: RoleMatch | None = None
+    requested_family = role_family(request.role)
+    if requested_family is not None:
+        title_family = role_family(job.title)
+        if title_family is None:
             return FilterDecision(
                 False,
-                f"location {job.location!r} does not overlap {request.location!r}",
+                f"title {job.title!r} carries no {requested_family!r} role signal",
             )
+        if (
+            title_family != requested_family
+            and title_family not in related_families(requested_family)
+        ):
+            return FilterDecision(
+                False,
+                f"title {job.title!r} is role family {title_family!r}, "
+                f"unrelated to requested {requested_family!r}",
+            )
+        matched = (
+            RoleMatch.exact
+            if title_family == requested_family
+            else RoleMatch.related
+        )
+    else:
+        role_tokens = frozenset(
+            token for token in _tokens(request.role) if token not in ROLE_STOPWORDS
+        )
+        if role_tokens and not (role_tokens & _tokens(job.title)):
+            missing = ", ".join(sorted(role_tokens))
+            return FilterDecision(
+                False, f"title {job.title!r} matches none of: {missing}"
+            )
+
+    if not location_matches(request.location, job.location):
+        return FilterDecision(
+            False,
+            f"location {job.location!r} does not overlap {request.location!r}",
+        )
 
     requested_range = parse_year_range(request.experience)
     job_range = parse_year_range(job.experience_level)
@@ -275,4 +317,10 @@ def filter_check(request: DiscoveryRequest, job: ExtractedJob) -> FilterDecision
                 f"{request.experience!r}",
             )
 
-    return FilterDecision(True)
+    reason = (
+        f"title {job.title!r} matches related role family "
+        f"{role_family(job.title)!r}"
+        if matched is RoleMatch.related
+        else None
+    )
+    return FilterDecision(True, reason=reason, role_match=matched)

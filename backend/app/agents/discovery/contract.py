@@ -98,17 +98,44 @@ class DiscoveryRequest(BaseModel):
 class DiscoveryResult(BaseModel):
     """Structured output persisted on the AgentRun when discovery succeeds.
 
-    The invariant ``jobs_created + jobs_updated + jobs_skipped +
-    listings_skipped + invalid_results == candidates_found`` holds whenever
-    every candidate is accounted for by exactly one terminal outcome. Each
-    candidate skipped or degraded for any reason also appears in ``issues``,
-    which is capped at :data:`MAX_DISCOVERY_ISSUES`; the counters stay exact
-    even when the detail list is truncated.
+    Every counter has one documented meaning and no candidate is counted
+    twice:
+
+    * ``searched`` — raw search hits returned across every executed query,
+      before deduplication.
+    * ``malformed_results`` — search hits dropped for a non-http URL or an
+      empty canonical form; they never become candidates.
+    * ``duplicates_skipped`` — further hits whose canonical URL was already
+      seen in this run; they never become candidates.
+    *       ``candidates_found`` — the deduplicated, validated candidate URLs that
+      entered the crawl phase (capped at ``max_candidates``). Each candidate
+      is resolved by exactly one terminal outcome, giving the invariant
+      ``jobs_created + jobs_updated + jobs_skipped + listings_skipped +
+      invalid_results == candidates_found``.
+    * ``invalid_results`` — candidates rejected because their URL does not
+      fit the database columns.
+    * ``listings_skipped`` — candidates whose URL or crawled page is a
+      listing, not an individual vacancy.
+    * ``scrape_attempts`` — candidates actually sent to the crawler.
+      ``scrape_attempts == extractions_succeeded + scrape_failures``: every
+      attempt either yields usable content or fails.
+    * ``extractions_succeeded`` — crawls that returned usable content,
+      counted regardless of whether the candidate is later rejected by
+      role/location filtering or listing-page classification.
+    * ``scrape_failures`` — crawls that errored or returned no usable
+      content; a failed crawl may still persist from search-derived fields.
+    * ``jobs_created`` / ``jobs_updated`` — persisted candidate jobs inserted
+      or matched by ``canonical_url``.
+
+    Each candidate skipped or degraded for any reason also appears in
+    ``issues``, which is capped at :data:`MAX_DISCOVERY_ISSUES`; the counters
+    stay exact even when the detail list is truncated.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     query: dict[str, str]
+    queries: list[str] = Field(default_factory=list)
     searched: int = Field(ge=0)
     candidates_found: int = Field(ge=0)
     jobs_created: int = Field(ge=0)
