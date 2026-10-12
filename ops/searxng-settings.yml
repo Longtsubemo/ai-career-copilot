@@ -1,0 +1,17 @@
+﻿use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "career-copilot-local-dev-searxng"
+  limiter: false
+  image_proxy: true
+
+ui:
+  static_use_hash: true
+
+outgoing:
+  request_timeout: 10

@@ -1,24 +1,65 @@
 # ===========================================
-# Google Gemini
+# Environment files (secrets live in .env,
+# only .env.example templates are tracked)
 # ===========================================
-
-GEMINI_API_KEY=
-
-# ===========================================
-# Database
-# ===========================================
-
-DATABASE_URL=sqlite:///career_copilot.db
+.env
+.env.*
+!.env.example
 
 # ===========================================
-# Application
+# Python
 # ===========================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
 
-APP_ENV=development
-LOG_LEVEL=INFO
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Python build
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # ===========================================
-# Playwright
+# Databases (Postgres runs in Docker;
+# local scratch DBs must not be committed)
 # ===========================================
+*.db
+*.sqlite
+*.sqlite3
 
-PLAYWRIGHT_HEADLESS=true
+# ===========================================
+# Logs
+# ===========================================
+*.log
+
+# ===========================================
+# Frontend (frontend/.gitignore repeats these)
+# ===========================================
+node_modules/
+frontend/dist/
+frontend/coverage/
+npm-debug.log*
+
+# ===========================================
+# IDE / OS
+# ===========================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ===========================================
+# Secrets
+# ===========================================
+*.pem
+*.key
+*.crt
