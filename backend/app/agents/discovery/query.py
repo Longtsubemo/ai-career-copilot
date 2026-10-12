@@ -1,8 +1,18 @@
-"""Deterministic search-query construction for discovery."""
+"""Deterministic search-query construction for discovery.
+
+The primary query is the requested constraints verbatim. A single, well-grounded
+role alias may be appended to improve recall (``AI Engineer`` also searches
+``Artificial Intelligence Engineer``), but expansion is always bounded to a
+small fixed maximum — never dozens of searches, never a location or experience
+rewrite.
+"""
 
 from __future__ import annotations
 
 from app.agents.discovery.contract import DiscoveryRequest
+from app.agents.discovery.relevance import ROLE_ALIASES, normalize_role
+
+MAX_SEARCH_QUERIES = 2
 
 
 def build_search_query(request: DiscoveryRequest) -> str:
@@ -14,3 +24,26 @@ def build_search_query(request: DiscoveryRequest) -> str:
     return " ".join(
         (request.role, request.location, "jobs", request.experience)
     )
+
+
+def build_search_queries(
+    request: DiscoveryRequest, *, max_queries: int = MAX_SEARCH_QUERIES
+) -> list[str]:
+    """Return the bounded, ordered list of queries to run for a request.
+
+    The first entry is always :func:`build_search_query`. When the requested
+    role is exactly a known taxonomy phrase with a well-established alias, the
+    alias query is appended if the budget allows. The result never repeats a
+    query and never exceeds ``max_queries``.
+    """
+    if max_queries < 1:
+        raise ValueError("max_queries must be >= 1")
+    queries = [build_search_query(request)]
+    alias = ROLE_ALIASES.get(normalize_role(request.role))
+    if alias is not None and len(queries) < max_queries:
+        candidate = " ".join(
+            (alias, request.location, "jobs", request.experience)
+        )
+        if candidate not in queries:
+            queries.append(candidate)
+    return queries

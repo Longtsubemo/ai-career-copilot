@@ -53,7 +53,10 @@ def test_discover_persists_a_job(client_factory, session):
     assert output["jobs_updated"] == 0
     assert output["jobs_skipped"] == 0
     assert len(output["job_ids"]) == 1
-    assert searxng.queries == ["AI Engineer Bangalore jobs 1-3 years"]
+    assert searxng.queries == [
+        "AI Engineer Bangalore jobs 1-3 years",
+        "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+    ]
 
     listed = client.get("/api/jobs")
     assert listed.json()["total"] == 1
@@ -76,7 +79,7 @@ def test_repeated_discovery_reuses_the_run_and_upserts(client_factory, session):
     assert second["id"] == first["id"]
     assert second["status"] == "succeeded"
     assert second["output"] == first["output"]
-    assert len(searxng.queries) == 1
+    assert len(searxng.queries) == 2
     assert session.scalar(select(func.count()).select_from(Job)) == 1
     assert session.scalar(select(func.count()).select_from(AgentRun)) == 1
 

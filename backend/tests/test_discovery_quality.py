@@ -54,6 +54,12 @@ def get_job(session, url: str) -> Job:
     return job
 
 
+def issue_for(output: dict, category: str) -> dict:
+    matches = [issue for issue in output["issues"] if issue["category"] == category]
+    assert matches, f"no {category!r} issue in {output['issues']!r}"
+    return matches[0]
+
+
 def assert_invariant(output: dict) -> None:
     assert (
         output["jobs_created"]
@@ -62,6 +68,10 @@ def assert_invariant(output: dict) -> None:
         + output["listings_skipped"]
         + output["invalid_results"]
         == output["candidates_found"]
+    )
+    assert (
+        output["extractions_succeeded"] + output["scrape_failures"]
+        == output["scrape_attempts"]
     )
 
 
@@ -81,7 +91,7 @@ class TestListingsAndDiagnostics:
         assert output["listings_skipped"] == 1
         assert output["scrape_attempts"] == 0
         assert output["jobs_created"] == 0
-        assert output["issues"][0]["category"] == "listing_page"
+        assert issue_for(output, "listing_page")["stage"] == "classify"
         assert_invariant(output)
 
     def test_page_listing_reclassification_skips_after_crawl(self, session) -> None:
@@ -100,6 +110,21 @@ class TestListingsAndDiagnostics:
         assert output["listings_skipped"] == 1
         assert output["scrape_attempts"] == 1
         assert output["jobs_created"] == 0
+        assert output["extractions_succeeded"] == 1
+        assert_invariant(output)
+
+    def test_usable_crawl_rejected_by_filter_still_counts_as_extraction(
+        self, session
+    ) -> None:
+        page = listing_page(URL_A, title="Data Scientist", location="Bangalore")
+        agent = make_agent([search_result(URL_A, "Data Scientist")], {URL_A: page})
+
+        output = agent.discover(session, REQUEST)
+
+        assert output["jobs_skipped"] == 1
+        assert output["jobs_created"] == 0
+        assert output["extractions_succeeded"] == 1
+        assert output["scrape_failures"] == 0
         assert_invariant(output)
 
     def test_malformed_results_are_counted_and_issue_list_is_capped(
@@ -110,7 +135,7 @@ class TestListingsAndDiagnostics:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["malformed_results"] == 30
+        assert output["malformed_results"] == 60
         assert output["candidates_found"] == 0
         assert len(output["issues"]) == MAX_DISCOVERY_ISSUES
         assert_invariant(output)
@@ -124,7 +149,7 @@ class TestListingsAndDiagnostics:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["duplicates_skipped"] == 1
+        assert output["duplicates_skipped"] == 3
         assert output["candidates_found"] == 1
         assert output["jobs_created"] == 1
         assert_invariant(output)
@@ -145,8 +170,7 @@ class TestListingsAndDiagnostics:
         output = agent.discover(session, REQUEST)
 
         assert output["scrape_failures"] == 1
-        assert output["issues"][0]["category"] == expected
-        assert output["issues"][0]["stage"] == "crawl"
+        assert issue_for(output, expected)["stage"] == "crawl"
         assert_invariant(output)
 
     def test_empty_content_is_empty_extraction(self, session) -> None:
@@ -156,7 +180,7 @@ class TestListingsAndDiagnostics:
         output = agent.discover(session, REQUEST)
 
         assert output["scrape_failures"] == 1
-        assert output["issues"][0]["category"] == "empty_extraction"
+        assert issue_for(output, "empty_extraction")
         assert output["extractions_succeeded"] == 0
         assert get_job(session, URL_A).crawl_status is CrawlStatus.failed
         assert_invariant(output)

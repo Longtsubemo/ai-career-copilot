@@ -22,7 +22,9 @@ class FakeSearXNGClient:
     """Scripted search client: fixed results, or a fixed failure.
 
     Every recorded query lets a test assert that the agent built and used
-    the deterministic query string.
+    the deterministic query string. ``fail_after`` delays the scripted error
+    until after N successful calls, so a bounded multi-query run can have a
+    working primary query and a failing secondary one.
     """
 
     def __init__(
@@ -30,9 +32,11 @@ class FakeSearXNGClient:
         results: Sequence[SearchResult] = (),
         *,
         error: SearXNGError | None = None,
+        fail_after: int | None = None,
     ) -> None:
         self._results = list(results)
         self._error = error
+        self._fail_after = fail_after
         self.queries: list[str] = []
 
     @property
@@ -45,7 +49,9 @@ class FakeSearXNGClient:
 
     def search(self, query: str, *, page: int = 1) -> list[SearchResult]:
         self.queries.append(query)
-        if self._error is not None:
+        if self._error is not None and (
+            self._fail_after is None or len(self.queries) > self._fail_after
+        ):
             raise self._error
         return list(self._results)
 
