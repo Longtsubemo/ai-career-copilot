@@ -41,6 +41,7 @@ from tests.fake_clients import (
     crawl_result,
     listing_page,
     search_result,
+    TEST_DISCOVERY_SOURCE_REGISTRY,
 )
 
 T1 = datetime(2026, 1, 15, tzinfo=timezone.utc)
@@ -52,6 +53,11 @@ URL_B = "https://jobs.example.com/role/99"
 REQUEST = DiscoveryRequest(
     role="AI Engineer", location="Bangalore", experience="1-3 years"
 )
+TEST_SITE_HINT = (
+    "(site:boards.example.com OR site:boards.greenhouse.io OR site:example.com OR "
+    "site:jobs.ashbyhq.com OR site:jobs.example.com OR site:jobs.lever.co OR "
+    "site:jobs.smartrecruiters.com)"
+)
 
 HAPPY_RESULTS = [
     search_result(URL_A, "AI Engineer", "Build agentic systems."),
@@ -62,7 +68,11 @@ HAPPY_PAGES = {
     URL_A: listing_page(
         URL_A,
         title="Senior AI Engineer",
-        description="Own the agent platform.",
+        description=(
+            "Design and operate the agent platform, improve reliability, and "
+            "work with product and engineering teams to deliver production "
+            "AI capabilities to customers."
+        ),
         location="Bangalore",
         company="Acme Inc.",
         employment_type="Full-time",
@@ -83,7 +93,11 @@ def make_agent(
     searxng = FakeSearXNGClient(results, error=error)
     firecrawl = FakeFirecrawlClient(pages)
     agent = DiscoveryAgent(
-        searxng, firecrawl, clock=clock or (lambda: T1), **kwargs  # type: ignore[arg-type]
+        searxng,
+        firecrawl,
+        clock=clock or (lambda: T1),
+        source_registry=TEST_DISCOVERY_SOURCE_REGISTRY,
+        **kwargs,  # type: ignore[arg-type]
     )
     return agent, searxng, firecrawl
 
@@ -108,11 +122,12 @@ def assert_invariant(output: dict) -> None:
         + output["jobs_updated"]
         + output["jobs_skipped"]
         + output["listings_skipped"]
-        + output["invalid_results"]
         == output["candidates_found"]
     )
     assert (
-        output["extractions_succeeded"] + output["scrape_failures"]
+        output["extractions_succeeded"]
+        + output["scrape_failures"]
+        + output["page_validation_failures"]
         == output["scrape_attempts"]
     )
 
@@ -433,8 +448,8 @@ class TestDiscoveryWithDatabase:
         assert json.dumps(output, allow_nan=False)
 
         assert output["queries"] == [
-            "AI Engineer Bangalore jobs 1-3 years",
-            "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+            f"AI Engineer Bangalore jobs 1-3 years {TEST_SITE_HINT}",
+            f"Artificial Intelligence Engineer Bangalore jobs 1-3 years {TEST_SITE_HINT}",
         ]
         assert searxng.queries == output["queries"]
         assert firecrawl.requested == [URL_A, URL_B]
@@ -444,7 +459,7 @@ class TestDiscoveryWithDatabase:
         assert job_a.location == "Bangalore"
         assert job_a.employment_type == "Full-time"
         assert job_a.experience_level == "1-3 years"
-        assert job_a.description == "Own the agent platform."
+        assert job_a.description == HAPPY_PAGES[URL_A].metadata["description"]
         assert job_a.job_url == URL_A
         assert job_a.source == "searxng"
         assert job_a.is_active is True
@@ -498,23 +513,20 @@ class TestDiscoveryWithDatabase:
             assert row.last_seen_at == T2
             assert row.crawled_at == T2
 
-    def test_failed_crawl_is_recorded_without_faking_success(
+    def test_failed_first_crawl_does_not_persist_search_metadata(
         self, session
     ) -> None:
         results = [search_result(URL_A, "AI Engineer", "Build agents.")]
-        pages = {URL_A: crawl_result(URL_A, markdown="", metadata={})}
+        pages = {URL_A: FirecrawlError("crawl failed", kind="network_error")}
         agent, _, _ = make_agent(results, pages)
 
         output = agent.discover(session, REQUEST)
 
-        assert output["jobs_created"] == 1
+        assert output["jobs_created"] == 0
+        assert output["jobs_skipped"] == 1
         assert len(output["errors"]) == 1
-        assert "no usable content" in output["errors"][0]
-        job = get_job(session, URL_A)
-        assert job.crawl_status == CrawlStatus.failed
-        assert job.crawled_at is None
-        assert job.title == "AI Engineer"
-        assert job.description == "Build agents."
+        assert job_count(session, canonicalize_url(URL_A)) == 0
+        assert output["scrape_failures"] == 1
 
     def test_failed_recrawl_preserves_the_last_success_timestamp(
         self, session
@@ -523,7 +535,7 @@ class TestDiscoveryWithDatabase:
         first.discover(session, REQUEST)
 
         broken = dict(HAPPY_PAGES)
-        broken[URL_A] = crawl_result(URL_A, markdown="", metadata={})
+        broken[URL_A] = FirecrawlError("crawl failed", kind="network_error")
         second, _, _ = make_agent(
             [HAPPY_RESULTS[0]], broken, clock=lambda: T2
         )
@@ -531,7 +543,8 @@ class TestDiscoveryWithDatabase:
         session.expire_all()
 
         assert output["jobs_created"] == 0
-        assert output["jobs_updated"] == 1
+        assert output["jobs_updated"] == 0
+        assert output["jobs_skipped"] == 1
         assert output["errors"]
         job = get_job(session, URL_A)
         assert job.crawl_status == CrawlStatus.failed
@@ -554,10 +567,11 @@ class TestDiscoveryWithDatabase:
         session.expire_all()
 
         assert output["jobs_created"] == 0
-        assert output["jobs_updated"] == 1
+        assert output["jobs_updated"] == 0
+        assert output["jobs_skipped"] == 1
         job = get_job(session, URL_A)
         assert job.title == "Senior AI Engineer"
-        assert job.description == "Own the agent platform."
+        assert job.description == HAPPY_PAGES[URL_A].metadata["description"]
         assert job.job_url == URL_A
         assert job.location == "Bangalore"
         assert job.employment_type == "Full-time"
@@ -577,7 +591,11 @@ class TestDiscoveryWithDatabase:
             URL_A: listing_page(
                 URL_A,
                 title="Staff AI Engineer",
-                description="Lead the agent platform.",
+                description=(
+                    "Lead the agent platform, guide technical decisions, and "
+                    "partner with product and engineering teams to deliver "
+                    "reliable AI services for customers."
+                ),
                 location="Bangalore",
                 company="Acme Inc.",
                 employment_type="Full-time",
@@ -592,7 +610,7 @@ class TestDiscoveryWithDatabase:
         assert output["jobs_updated"] == 2
         job = get_job(session, URL_A)
         assert job.title == "Staff AI Engineer"
-        assert job.description == "Lead the agent platform."
+        assert job.description == refreshed[URL_A].metadata["description"]
         assert job.experience_level == "3-5 years"
         assert job.crawl_status == CrawlStatus.scraped
         assert job.crawled_at == T2
@@ -661,10 +679,12 @@ class TestDiscoveryWithDatabase:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["candidates_found"] == 1
+        assert output["candidates_found"] == 0
         assert output["jobs_created"] == 0
         assert output["jobs_skipped"] == 0
-        assert output["invalid_results"] == 1
+        # The fake search client returns this invalid hit for both bounded
+        # queries, so invalid_results counts both raw search-result entries.
+        assert output["invalid_results"] == 2
         assert any("longer than" in error for error in output["errors"])
         assert_invariant(output)
         assert firecrawl.requested == []
@@ -682,8 +702,8 @@ class TestDiscoveryWithDatabase:
                 "experience": "1-3 years",
             },
             "queries": [
-                "AI Engineer Bangalore jobs 1-3 years",
-                "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+                f"AI Engineer Bangalore jobs 1-3 years {TEST_SITE_HINT}",
+                f"Artificial Intelligence Engineer Bangalore jobs 1-3 years {TEST_SITE_HINT}",
             ],
             "searched": 0,
             "candidates_found": 0,
@@ -695,6 +715,7 @@ class TestDiscoveryWithDatabase:
             "duplicates_skipped": 0,
             "scrape_attempts": 0,
             "extractions_succeeded": 0,
+            "page_validation_failures": 0,
             "listings_skipped": 0,
             "invalid_results": 0,
             "malformed_results": 0,
@@ -718,8 +739,9 @@ class TestDiscoveryWithDatabase:
 
         output = agent.discover(session, REQUEST)
 
-        assert searxng.queries == ["AI Engineer Bangalore jobs 1-3 years"]
-        assert output["queries"] == ["AI Engineer Bangalore jobs 1-3 years"]
+        expected_query = f"AI Engineer Bangalore jobs 1-3 years {TEST_SITE_HINT}"
+        assert searxng.queries == [expected_query]
+        assert output["queries"] == [expected_query]
         assert output["searched"] == 2
         assert output["jobs_created"] == 2
 
@@ -730,7 +752,10 @@ class TestDiscoveryWithDatabase:
             HAPPY_RESULTS, error=SearXNGError("boom"), fail_after=1
         )
         agent = DiscoveryAgent(
-            searxng, FakeFirecrawlClient(HAPPY_PAGES), clock=lambda: T1
+            searxng,
+            FakeFirecrawlClient(HAPPY_PAGES),
+            clock=lambda: T1,
+            source_registry=TEST_DISCOVERY_SOURCE_REGISTRY,
         )
 
         output = agent.discover(session, REQUEST)
@@ -750,7 +775,7 @@ class TestDiscoveryWithDatabase:
 
         second, _, _ = make_agent(
             [HAPPY_RESULTS[0]],
-            {URL_A: crawl_result(URL_A, markdown="# Senior AI Engineer")},
+            {URL_A: listing_page(URL_A, title="Senior AI Engineer")},
             clock=lambda: T2,
         )
         second.discover(session, REQUEST)
@@ -758,7 +783,7 @@ class TestDiscoveryWithDatabase:
 
         assert get_job(session, URL_A).company_id == company_id
 
-    def test_metadata_only_page_counts_as_usable_content(self, session) -> None:
+    def test_metadata_only_title_is_not_sufficient_vacancy_evidence(self, session) -> None:
         results = [search_result(URL_A, "AI Engineer")]
         pages = {
             URL_A: crawl_result(
@@ -769,11 +794,11 @@ class TestDiscoveryWithDatabase:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["errors"] == []
-        job = get_job(session, URL_A)
-        assert job.crawl_status == CrawlStatus.scraped
-        assert job.crawled_at == T1
-        assert job.title == "AI Engineer"
+        assert output["jobs_created"] == 0
+        assert output["jobs_skipped"] == 1
+        assert output["extractions_succeeded"] == 0
+        assert output["page_validation_failures"] == 1
+        assert job_count(session, canonicalize_url(URL_A)) == 0
 
     def test_max_candidates_caps_the_number_of_crawls(self, session) -> None:
         results = [
@@ -828,8 +853,8 @@ class TestHandleContract:
         )
 
         assert searxng.queries == [
-            "AI Engineer Bangalore jobs 1-3 years",
-            "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+            f"AI Engineer Bangalore jobs 1-3 years {TEST_SITE_HINT}",
+            f"Artificial Intelligence Engineer Bangalore jobs 1-3 years {TEST_SITE_HINT}",
         ]
         assert output["jobs_created"] == 2
         assert_invariant(output)

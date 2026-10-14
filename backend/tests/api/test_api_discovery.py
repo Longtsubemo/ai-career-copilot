@@ -8,13 +8,18 @@ from app.clients.searxng import SearXNGError
 from app.models.agent_run import AgentRun
 from app.models.job import Job
 from tests.fake_clients import (
+    DEFAULT_PAGE_DESCRIPTION,
     FakeFirecrawlClient,
     FakeSearXNGClient,
     listing_page,
     search_result,
 )
 
-JOB_URL = "https://example.com/jobs/ai-engineer-bangalore"
+JOB_URL = "https://boards.greenhouse.io/acme/jobs/127817"
+SITE_HINT = (
+    "(site:boards.greenhouse.io OR site:jobs.ashbyhq.com OR "
+    "site:jobs.lever.co OR site:jobs.smartrecruiters.com)"
+)
 
 REQUEST = {"role": "AI Engineer", "location": "Bangalore", "experience": "1-3 years"}
 
@@ -26,7 +31,7 @@ def _fakes() -> tuple[FakeSearXNGClient, FakeFirecrawlClient]:
             JOB_URL: listing_page(
                 JOB_URL,
                 title="Senior AI Engineer",
-                description="Own the agent platform.",
+                description=DEFAULT_PAGE_DESCRIPTION,
                 location="Bangalore",
                 company="Acme Inc.",
                 employment_type="Full-time",
@@ -54,8 +59,8 @@ def test_discover_persists_a_job(client_factory, session):
     assert output["jobs_skipped"] == 0
     assert len(output["job_ids"]) == 1
     assert searxng.queries == [
-        "AI Engineer Bangalore jobs 1-3 years",
-        "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+        f"AI Engineer Bangalore jobs 1-3 years {SITE_HINT}",
+        f"Artificial Intelligence Engineer Bangalore jobs 1-3 years {SITE_HINT}",
     ]
 
     listed = client.get("/api/jobs")

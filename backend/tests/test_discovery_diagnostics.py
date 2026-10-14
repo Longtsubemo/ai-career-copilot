@@ -11,7 +11,7 @@ import pytest
 
 import app.clients.firecrawl as firecrawl_module
 from app.agents.discovery.agent import DiscoveryAgent, _Candidate, _record_issue
-from app.agents.discovery.classify import classify_url, sanitize_public_url
+from app.agents.discovery.classify import sanitize_public_url
 from app.agents.discovery.contract import (
     DiscoveryIssue,
     DiscoveryIssueCategory,
@@ -49,7 +49,6 @@ def _log_mocked_http_error(message: str, caplog, monkeypatch, *, code=None):
     candidate = _Candidate(
         result=search_result(url, "AI Engineer"),
         canonical_url="https://boards.example.com/jobs/42",
-        quality=classify_url(url),
     )
 
     with caplog.at_level(logging.WARNING, logger="app.agents.discovery.agent"):
@@ -83,7 +82,6 @@ def test_crawl_failure_logs_safe_provider_diagnostics(caplog) -> None:
     candidate = _Candidate(
         result=search_result(url, "AI Engineer"),
         canonical_url="https://boards.example.com/jobs/42",
-        quality=classify_url(url),
     )
 
     with caplog.at_level(logging.WARNING, logger="app.agents.discovery.agent"):
@@ -203,7 +201,6 @@ def test_unrecognized_provider_code_cannot_leak_through_message_or_logs(
     candidate = _Candidate(
         result=search_result(url, "AI Engineer"),
         canonical_url=url,
-        quality=classify_url(url),
     )
 
     with caplog.at_level(logging.WARNING, logger="app.agents.discovery.agent"):

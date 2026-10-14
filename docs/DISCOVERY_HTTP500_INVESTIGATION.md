@@ -213,3 +213,63 @@ not echo its internal job ID in the scrape error response.
   not expose these diagnostic fields.
 - These changes improve observability and privacy. They do not explain why
   Naukri returned HTTP 403; that target-side cause remains unknown.
+
+## Endpoint-level regression coverage note
+
+The existing offline tests cover `DiscoveryResult` serialization and emitted
+discovery logs. The `/api/jobs/discover` endpoint-level failure-response
+boundary has not been directly regression-tested. Database-backed API tests
+were excluded from the previous audit because their fixtures can create and
+drop a PostgreSQL test database.
+
+Database-backed persistence tests were not rerun after the latest HTTP 200
+page-validation change. This is separate from the endpoint-level coverage gap
+above; the page-validation regression checks in this change use offline fake
+clients and a captured persistence plan.
+
+## Page-evidence validation hardening
+
+The earlier synthetic HTTP 200 false acceptance occurred because a
+job-specific-looking title plus a long description met the minimum content
+checks, without requiring positive vacancy evidence or recognizing common
+page-level failure text. Validation now checks challenge and clear error
+signals in page titles, headings, and opening content independently of the
+reported HTTP status. Pages without `JobPosting` structured data must also
+show job-specific evidence, such as recognized vacancy section headings or
+multiple distinct job-action terms. Structured postings remain usable when
+their title and description are sufficient and the page surface does not
+contradict them with a clear failure signal. Failed validations retain generic
+public issues and cannot enter the persistence plan; existing failed-recrawl
+updates remain limited to operational fields.
+
+Focused offline regression tests cover the original HTTP 200 internal-error
+reproduction, generic failure and challenge pages, positive vacancy evidence,
+structured-data conflict handling, and safe persistence planning. This
+hardening prevents false acceptance of recognized HTTP 200 failure templates;
+it does not explain why Naukri returned HTTP 403. The historical sequence
+remains Naukri HTTP 403, Firecrawl engine exhaustion, and application HTTP 500.
+
+The error-phrase regression also protects legitimate vacancy text: a
+substantive AI Engineer description beginning “When something went wrong in
+production…” remains acceptable when it has sufficient positive job evidence.
+A generic “Something went wrong” page heading and the confirmed HTTP 200
+internal-error reproduction remain rejected. This narrows the phrase-level
+false-positive rule while retaining the broader page-error, access-denied,
+not-found, hosting-error, and challenge checks.
+
+## Career-page-only source eligibility
+
+Discovery admits direct-posting URLs only from explicitly enabled ATS
+providers with supported posting paths or explicitly registered employer
+career hosts and path rules. The default ATS hosts are Greenhouse, Lever,
+Ashby, and SmartRecruiters. Workday tenants and employer career hosts require
+explicit registration; none are registered by default.
+
+Eligibility is enforced before canonical deduplication and candidate-cap
+admission. SearXNG `site:` hints improve search relevance but are not the
+eligibility boundary. Malformed, credential-bearing, unsupported, listing,
+landing-page, and oversized URLs are rejected before crawling. Vacancy
+acceptance uses page-derived evidence; search-result titles and snippets
+cannot supply missing mandatory vacancy fields. Failed or unusable crawls do
+not create new vacancies, and failed recrawls preserve previously accepted
+vacancy content and verification state.

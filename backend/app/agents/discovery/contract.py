@@ -114,25 +114,37 @@ class DiscoveryResult(BaseModel):
       empty canonical form; they never become candidates.
     * ``duplicates_skipped`` — further hits whose canonical URL was already
       seen in this run; they never become candidates.
-    *       ``candidates_found`` — the deduplicated, validated candidate URLs that
-      entered the crawl phase (capped at ``max_candidates``). Each candidate
-      is resolved by exactly one terminal outcome, giving the invariant
-      ``jobs_created + jobs_updated + jobs_skipped + listings_skipped +
-      invalid_results == candidates_found``.
-    * ``invalid_results`` — candidates rejected because their URL does not
-      fit the database columns.
-    * ``listings_skipped`` — candidates whose URL or crawled page is a
-      listing, not an individual vacancy.
+    * ``candidates_found`` — the deduplicated, validated direct-posting URLs
+      from enabled sources that entered the crawl phase (capped at
+      ``max_candidates``). Unsupported sources, non-posting URL shapes, and
+      URLs that exceed persisted URL column limits are recorded before this
+      count and before the cap. Each admitted candidate is resolved by
+      exactly one terminal outcome, giving the invariant
+      ``jobs_created + jobs_updated + jobs_skipped + listings_skipped ==
+      candidates_found``.
+    * ``invalid_results`` — otherwise eligible URLs rejected before candidate
+      admission because they exceed the persisted URL column limits.
+    * ``listings_skipped`` — eligible candidates whose crawled page is a
+      listing, not an individual vacancy. URL-level landing and listing pages
+      are rejected before candidate counting.
     * ``scrape_attempts`` — candidates actually sent to the crawler.
-      ``scrape_attempts == extractions_succeeded + scrape_failures``: every
-      attempt either yields usable content or fails.
-    * ``extractions_succeeded`` — crawls that returned usable content,
-      counted regardless of whether the candidate is later rejected by
-      role/location filtering or listing-page classification.
-    * ``scrape_failures`` — crawls that errored or returned no usable
-      content; a failed crawl may still persist from search-derived fields.
+      ``scrape_attempts == extractions_succeeded + scrape_failures +
+      page_validation_failures``.
+    * ``extractions_succeeded`` — crawls with sufficient page-derived
+      vacancy evidence, counted even if later rejected by request filters.
+      Search-result titles and snippets do not count as page evidence.
+    * ``scrape_failures`` — Firecrawl transport, HTTP, API or response-shape
+      failures.
+    * ``page_validation_failures`` — successful crawls that were empty,
+      boilerplate, a listing, a challenge/error page, or lacked a page-derived
+      job title or substantive description. These are a subset of terminal
+      candidate skips/listings, not extra candidate outcomes.
+    * ``jobs_skipped`` — admitted candidates that failed transport/page
+      validation or did not match the requested filters. A failed recrawl may
+      update only operational fields on an existing job, but it is not
+      counted as a job content update.
     * ``jobs_created`` / ``jobs_updated`` — persisted candidate jobs inserted
-      or matched by ``canonical_url``.
+      or content-upserted by ``canonical_url`` after page validation.
 
     Each candidate skipped or degraded for any reason also appears in
     ``issues``, which is capped at :data:`MAX_DISCOVERY_ISSUES`; the counters
@@ -153,6 +165,7 @@ class DiscoveryResult(BaseModel):
     duplicates_skipped: int = Field(default=0, ge=0)
     scrape_attempts: int = Field(default=0, ge=0)
     extractions_succeeded: int = Field(default=0, ge=0)
+    page_validation_failures: int = Field(default=0, ge=0)
     listings_skipped: int = Field(default=0, ge=0)
     invalid_results: int = Field(default=0, ge=0)
     malformed_results: int = Field(default=0, ge=0)

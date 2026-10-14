@@ -13,9 +13,42 @@ from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
+from app.agents.discovery.sources import ReviewedCareerSource, SourceRegistry
 from app.clients.firecrawl import CrawlResult, FirecrawlError
 from app.clients.gemini import GeminiError
 from app.clients.searxng import SearchResult, SearXNGError
+
+
+# Test-only reviewed hosts keep discovery persistence tests focused on their
+# existing behavior. Source-policy tests use DEFAULT_SOURCE_REGISTRY directly.
+TEST_DISCOVERY_SOURCE_REGISTRY = SourceRegistry(
+    employer_sources=(
+        ReviewedCareerSource(
+            name="test boards host",
+            hosts=frozenset({"boards.example.com"}),
+            direct_job_paths=(r"/jobs/[^/]+",),
+            listing_paths=(r"/jobs",),
+        ),
+        ReviewedCareerSource(
+            name="test jobs host",
+            hosts=frozenset({"jobs.example.com"}),
+            direct_job_paths=(r"/role/[^/]+",),
+            listing_paths=(r"/jobs",),
+        ),
+        ReviewedCareerSource(
+            name="test generic host",
+            hosts=frozenset({"example.com"}),
+            direct_job_paths=(r"/jobs/[^/]+", r"/[0-9]+"),
+            listing_paths=(r"/jobs",),
+        ),
+    )
+)
+
+DEFAULT_PAGE_DESCRIPTION = (
+    "Design, build, and maintain production AI systems while collaborating "
+    "with product, research, and engineering teams on reliable customer-facing "
+    "features and measurable improvements to deployed services."
+)
 
 
 class FakeSearXNGClient:
@@ -263,6 +296,7 @@ def listing_page(
         lines.append(f"Employment type: {employment_type}")
     if experience is not None:
         lines.append(f"Experience: {experience}")
+    lines.append(description or DEFAULT_PAGE_DESCRIPTION)
     if markdown_extra:
         lines.append(markdown_extra)
     markdown = "\n".join(lines) if lines else None

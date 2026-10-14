@@ -225,13 +225,18 @@ def classify_page(crawl: CrawlResult | None) -> UrlQuality:
     ):
         return UrlQuality.individual
 
-    haystack = " ".join(
-        value for value in (crawl.markdown,) if isinstance(value, str)
-    ).casefold()
-    if haystack and any(marker in haystack for marker in _LISTING_TEXT_MARKERS):
+    if has_listing_text(crawl):
         return UrlQuality.listing
 
     return UrlQuality.unknown
+
+
+def has_listing_text(crawl: CrawlResult | None) -> bool:
+    """Return whether page text contains a known search/listing marker."""
+    if crawl is None or not isinstance(crawl.markdown, str):
+        return False
+    haystack = crawl.markdown.casefold()
+    return any(marker in haystack for marker in _LISTING_TEXT_MARKERS)
 
 
 def resolve_quality(url_quality: UrlQuality, page_quality: UrlQuality) -> UrlQuality:
@@ -380,6 +385,7 @@ __all__ = [
     "classify_url",
     "crawl_http_status",
     "has_closure_evidence",
+    "has_listing_text",
     "has_usable_content",
     "resolve_quality",
     "sanitize_public_url",

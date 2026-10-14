@@ -24,6 +24,7 @@ from app.services.normalization import canonicalize_url
 from tests.fake_clients import (
     FakeFirecrawlClient,
     FakeSearXNGClient,
+    TEST_DISCOVERY_SOURCE_REGISTRY,
     crawl_result,
     listing_page,
     search_result,
@@ -43,6 +44,7 @@ def make_agent(results=(), pages=None, *, clock=None) -> DiscoveryAgent:
         FakeSearXNGClient(results),
         FakeFirecrawlClient(pages),
         clock=clock or (lambda: T1),
+        source_registry=TEST_DISCOVERY_SOURCE_REGISTRY,
     )
 
 
@@ -66,11 +68,12 @@ def assert_invariant(output: dict) -> None:
         + output["jobs_updated"]
         + output["jobs_skipped"]
         + output["listings_skipped"]
-        + output["invalid_results"]
         == output["candidates_found"]
     )
     assert (
-        output["extractions_succeeded"] + output["scrape_failures"]
+        output["extractions_succeeded"]
+        + output["scrape_failures"]
+        + output["page_validation_failures"]
         == output["scrape_attempts"]
     )
 
@@ -87,11 +90,11 @@ class TestListingsAndDiagnostics:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["candidates_found"] == 1
-        assert output["listings_skipped"] == 1
+        assert output["candidates_found"] == 0
+        assert output["listings_skipped"] == 0
         assert output["scrape_attempts"] == 0
         assert output["jobs_created"] == 0
-        assert issue_for(output, "listing_page")["stage"] == "classify"
+        assert issue_for(output, "listing_page")["stage"] == "eligibility"
         assert_invariant(output)
 
     def test_page_listing_reclassification_skips_after_crawl(self, session) -> None:
@@ -110,7 +113,8 @@ class TestListingsAndDiagnostics:
         assert output["listings_skipped"] == 1
         assert output["scrape_attempts"] == 1
         assert output["jobs_created"] == 0
-        assert output["extractions_succeeded"] == 1
+        assert output["extractions_succeeded"] == 0
+        assert output["page_validation_failures"] == 1
         assert_invariant(output)
 
     def test_usable_crawl_rejected_by_filter_still_counts_as_extraction(
@@ -145,7 +149,7 @@ class TestListingsAndDiagnostics:
             search_result(f"{URL_A}?utm_source=x", "AI Engineer"),
             search_result(f"{URL_A}/", "AI Engineer"),
         ]
-        agent = make_agent(results, {URL_A: open_page(URL_A)})
+        agent = make_agent(results, {results[0].url: open_page(URL_A)})
 
         output = agent.discover(session, REQUEST)
 
@@ -179,10 +183,12 @@ class TestListingsAndDiagnostics:
 
         output = agent.discover(session, REQUEST)
 
-        assert output["scrape_failures"] == 1
+        assert output["scrape_failures"] == 0
+        assert output["page_validation_failures"] == 1
         assert issue_for(output, "empty_extraction")
         assert output["extractions_succeeded"] == 0
-        assert get_job(session, URL_A).crawl_status is CrawlStatus.failed
+        assert output["jobs_created"] == 0
+        assert output["jobs_skipped"] == 1
         assert_invariant(output)
 
 
@@ -202,10 +208,11 @@ class TestAvailability:
         assert output["scrape_failures"] == 0
 
     def test_closure_evidence_marks_closed(self, session) -> None:
-        page = crawl_result(
+        page = listing_page(
             URL_A,
-            markdown="# AI Engineer\n\nThis position has been filled.",
-            metadata={"title": "AI Engineer", "location": "Bangalore"},
+            title="AI Engineer",
+            location="Bangalore",
+            markdown_extra="This position has been filled.",
         )
         agent = make_agent([search_result(URL_A, "AI Engineer")], {URL_A: page})
 
@@ -244,9 +251,13 @@ class TestAvailability:
             {URL_A: FirecrawlError("boom", kind="network_error")},
         )
 
-        agent.discover(session, REQUEST)
+        output = agent.discover(session, REQUEST)
 
-        assert get_job(session, URL_A).availability is AvailabilityStatus.unknown
+        assert output["jobs_created"] == 0
+        assert output["jobs_skipped"] == 1
+        assert session.scalar(
+            select(Job).where(Job.canonical_url == canonicalize_url(URL_A))
+        ) is None
 
 
 class TestDatePosted:
