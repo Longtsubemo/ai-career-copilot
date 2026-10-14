@@ -18,6 +18,7 @@ Two strict phases keep database work away from external HTTP:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ from app.agents.discovery.classify import (
     has_closure_evidence,
     has_usable_content,
     resolve_quality,
-    sanitize_url,
+    sanitize_public_url,
 )
 from app.agents.discovery.contract import (
     DISCOVERY_AGENT_NAME,
@@ -127,7 +128,7 @@ def _record_issue(
         return
     issues.append(
         DiscoveryIssue(
-            url=sanitize_url(url),
+            url=sanitize_public_url(url),
             stage=stage,
             category=category,
             status=status,
@@ -277,9 +278,8 @@ class DiscoveryAgent:
             decision = filter_check(request, extracted)
             if not decision.accepted:
                 logger.info(
-                    "discovery skipped %s: %s",
-                    candidate.canonical_url,
-                    decision.reason,
+                    "discovery skipped candidate at %s",
+                    sanitize_public_url(candidate.canonical_url),
                 )
                 jobs_skipped += 1
                 _record_issue(
@@ -287,7 +287,7 @@ class DiscoveryAgent:
                     url,
                     "filter",
                     DiscoveryIssueCategory.validation_rejected,
-                    message=decision.reason,
+                    message="candidate did not meet the requested filters",
                 )
                 continue
 
@@ -350,9 +350,17 @@ class DiscoveryAgent:
         """
         candidates: dict[str, _Candidate] = {}
         for result in results:
-            parts = urlsplit(result.url)
-            if parts.scheme not in ("http", "https") or not parts.netloc:
-                errors.append(f"malformed search result URL skipped: {result.url!r}")
+            try:
+                parts = urlsplit(result.url)
+                valid_url = (
+                    parts.scheme.lower() in ("http", "https")
+                    and bool(parts.netloc)
+                    and bool(parts.hostname)
+                )
+            except ValueError:
+                valid_url = False
+            if not valid_url:
+                errors.append("malformed search result URL skipped")
                 counters.malformed_results += 1
                 _record_issue(
                     issues,
@@ -362,9 +370,12 @@ class DiscoveryAgent:
                     message="malformed search result URL",
                 )
                 continue
-            canonical = canonicalize_url(result.url)
+            try:
+                canonical = canonicalize_url(result.url)
+            except ValueError:
+                canonical = ""
             if not canonical:
-                errors.append(f"search result URL has no canonical form: {result.url!r}")
+                errors.append("search result URL has no canonical form")
                 counters.malformed_results += 1
                 _record_issue(
                     issues,
@@ -388,12 +399,12 @@ class DiscoveryAgent:
             if len(canonical) > MAX_CANONICAL_URL_LENGTH:
                 rejection = (
                     f"canonical URL longer than {MAX_CANONICAL_URL_LENGTH} "
-                    f"characters, not persisted: {canonical!r}"
+                    "characters, not persisted"
                 )
             elif len(result.url) > MAX_JOB_URL_LENGTH:
                 rejection = (
                     f"job URL longer than {MAX_JOB_URL_LENGTH} characters, "
-                    f"not persisted: {result.url!r}"
+                    "not persisted"
                 )
             candidates[canonical] = _Candidate(
                 result=result,
@@ -411,16 +422,46 @@ class DiscoveryAgent:
         try:
             crawl = self._firecrawl.scrape(url)
         except FirecrawlError as exc:
+            category = _crawl_failure_category(exc)
+            logger.warning(
+                "Firecrawl scrape failed %s",
+                json.dumps(
+                    {
+                        "stage": "crawl",
+                        "category": category.value,
+                        "error_kind": exc.kind or "unknown",
+                        "status_code": exc.status_code,
+                        "correlation_id": exc.correlation_id,
+                        "provider_request_id": exc.request_id,
+                        "provider_error_code": exc.provider_error_code,
+                        "provider_message": exc.provider_message,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            if exc.status_code is not None:
+                public_detail = f"crawl failed with HTTP {exc.status_code}"
+            elif exc.kind == "timeout":
+                public_detail = "crawl request timed out"
+            elif exc.kind == "network_error":
+                public_detail = "crawl request failed due to a network error"
+            elif exc.kind == "api_error":
+                public_detail = "scrape failed"
+            elif exc.kind == "shape_error":
+                public_detail = "scrape response was invalid"
+            else:
+                public_detail = "crawl failed"
             return _CrawlOutcome(
                 None,
-                f"{url}: crawl failed: {exc}",
-                _crawl_failure_category(exc),
+                public_detail,
+                category,
                 exc.status_code,
             )
         if not has_usable_content(crawl):
             return _CrawlOutcome(
                 crawl,
-                f"{url}: crawl returned no usable content",
+                "crawl returned no usable content",
                 DiscoveryIssueCategory.empty_extraction,
             )
         return _CrawlOutcome(crawl, None)

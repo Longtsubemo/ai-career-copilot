@@ -19,6 +19,8 @@ from pydantic import (
     field_validator,
 )
 
+from app.agents.discovery.classify import sanitize_public_url
+
 DISCOVERY_AGENT_NAME = "job_discovery"
 
 MAX_DISCOVERY_ISSUES = 25
@@ -61,6 +63,11 @@ class DiscoveryIssue(BaseModel):
     category: DiscoveryIssueCategory
     status: int | None = None
     message: str = ""
+
+    @field_validator("url")
+    @classmethod
+    def _sanitize_public_url(cls, value: str) -> str:
+        return sanitize_public_url(value)
 
 
 class DiscoveryRequest(BaseModel):
