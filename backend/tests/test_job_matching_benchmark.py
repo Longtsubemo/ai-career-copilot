@@ -63,6 +63,71 @@ def test_benchmark_prompts_use_case_job_and_resume_evidence() -> None:
     assert "CANDIDATE EVIDENCE" in prompt
 
 
+def test_strong_case_requires_unclear_education_without_requirement_or_evidence() -> None:
+    case = next(case for case in load_cases() if case.id == "strong-retrieval-engineer")
+    assert case.job.analysis["education_requirements"] == []
+    assert case.expectations.must_be_unclear == ["education_match"]
+
+    result = valid_result(
+        verdict=MatchVerdict.strong_match,
+        matched_skills=["Python", "PyTorch", "Hugging Face Transformers"],
+        missing_required_skills=[],
+        education_match=MatchSignal.unclear,
+    )
+    assert evaluate_case(case, result)["passed"] is True
+
+    unjustified_match = result.model_copy(
+        update={"education_match": MatchSignal.matched}
+    )
+    evaluation = evaluate_case(case, unjustified_match)
+    assert evaluation["checks"]["signal_unclear:education_match"] is False
+    assert evaluation["passed"] is False
+
+
+def test_generic_years_match_does_not_hide_missing_gpu_training_evidence() -> None:
+    case = next(case for case in load_cases() if case.id == "missing-essential-ml")
+    assert case.job.analysis["experience_years_min"] == 5
+    assert case.candidate.years_of_experience == 5
+    assert "Production GPU training experience" in case.job.analysis["qualifications"]
+    assert case.expectations.must_be_matched == ["experience_match"]
+    assert "production GPU training experience" in case.expectations.must_identify_gaps
+
+    result = valid_result(
+        verdict=MatchVerdict.poor_match,
+        matched_skills=["Python"],
+        missing_required_skills=["PyTorch", "CUDA", "distributed training"],
+        experience_match=MatchSignal.matched,
+        gaps=[
+            "PyTorch, CUDA, and distributed training are not evidenced.",
+            "Production GPU training experience is not evidenced.",
+        ],
+        rationale=(
+            "The resume supports Python only; PyTorch, CUDA, distributed training, "
+            "and production GPU training are not evidenced."
+        ),
+    )
+    evaluation = evaluate_case(case, result)
+    assert evaluation["checks"]["signal_matched:experience_match"] is True
+    assert evaluation["checks"][
+        "gap_identified:production GPU training experience"
+    ] is True
+    assert evaluation["passed"] is True
+
+    missing_gpu_gap = result.model_copy(
+        update={"gaps": ["PyTorch, CUDA, and distributed training are not evidenced."]}
+    )
+    evaluation = evaluate_case(case, missing_gpu_gap)
+    assert evaluation["checks"][
+        "gap_identified:production GPU training experience"
+    ] is False
+    assert evaluation["passed"] is False
+
+    conflated_experience = result.model_copy(
+        update={"experience_match": MatchSignal.mismatched}
+    )
+    assert evaluate_case(case, conflated_experience)["passed"] is False
+
+
 def test_fixture_rejects_duplicate_ids_and_unknown_ranking_references(tmp_path) -> None:
     all_cases = [case.model_dump(mode="json") for case in load_cases()]
     duplicate_file = tmp_path / "duplicate.json"
@@ -321,6 +386,7 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
             verdict=MatchVerdict.strong_match,
             matched_skills=["Python", "PyTorch", "Hugging Face Transformers"],
             missing_required_skills=[],
+            education_match=MatchSignal.unclear,
             gaps=[],
             rationale="All core requirements are evidenced.",
         ),
@@ -330,8 +396,12 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
             verdict=MatchVerdict.poor_match,
             matched_skills=["Python"],
             missing_required_skills=["PyTorch", "CUDA", "distributed training"],
+            experience_match=MatchSignal.matched,
             strengths=["Python is supported by the resume."],
-            gaps=["PyTorch, CUDA, and distributed training are not evidenced."],
+            gaps=[
+                "PyTorch, CUDA, and distributed training are not evidenced.",
+                "Production GPU training experience is not evidenced.",
+            ],
             rationale="Only Python is supported among the central requirements.",
         ),
         "unrelated-accounting": valid_result(
@@ -431,6 +501,18 @@ def test_cli_requires_explicit_provider_call_acknowledgement(capsys) -> None:
 
     assert exc.value.code == 2
     assert "--confirm-provider-calls" in capsys.readouterr().err
+
+
+def test_cli_help_describes_the_configured_case_set(capsys) -> None:
+    from evaluation.run_job_matching import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+
+    help_text = capsys.readouterr().out
+    assert exc.value.code == 0
+    assert "all configured synthetic job-matching cases" in help_text
+    assert "six-case" not in help_text
 
 
 def test_runner_reports_missing_key_without_creating_client(monkeypatch, capsys) -> None:

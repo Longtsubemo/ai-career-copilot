@@ -58,7 +58,7 @@ def _write_reserved_result(target: Path, payload: dict[str, Any]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run six synthetic job-matching cases through the configured Gemini model."
+        description="Run all configured synthetic job-matching cases through the configured Gemini model."
     )
     parser.add_argument(
         "--confirm-provider-calls",
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.confirm_provider_calls:
         _parser().error(
             "provider calls are disabled by default; pass --confirm-provider-calls "
-            "to run the six-case synthetic evaluation"
+            "to run the synthetic evaluation"
         )
 
     try:

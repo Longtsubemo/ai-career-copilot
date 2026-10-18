@@ -41,7 +41,7 @@
       "allowed_verdicts": ["strong_match", "good_match"],
       "must_match_skills": ["Python", "PyTorch", "Hugging Face Transformers"],
       "must_be_missing_required": [],
-      "must_be_unclear": [],
+      "must_be_unclear": ["education_match"],
       "must_not_claim_positive": [],
       "must_identify_gaps": [],
       "score_above": ["partial-data-platform", "missing-essential-ml", "unrelated-accounting"]
@@ -137,9 +137,15 @@
       "allowed_verdicts": ["weak_match", "poor_match"],
       "must_match_skills": ["Python"],
       "must_be_missing_required": ["PyTorch", "CUDA", "distributed training"],
+      "must_be_matched": ["experience_match"],
       "must_be_unclear": [],
       "must_not_claim_positive": ["PyTorch", "CUDA", "distributed training"],
-      "must_identify_gaps": ["PyTorch", "CUDA", "distributed training"],
+      "must_identify_gaps": [
+        "PyTorch",
+        "CUDA",
+        "distributed training",
+        "production GPU training experience"
+      ],
       "score_above": []
     }
   },

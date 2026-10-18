@@ -9,14 +9,18 @@ pytest never calls Gemini.
 - **Strong match:** the resume documents the listed Python, PyTorch, and
   Transformers requirements. The verdict must be `strong_match` or
   `good_match`, and its score must rank above the partial, essential-skill-gap,
-  and unrelated-role cases.
+  and unrelated-role cases. Because this job has no education requirement and
+  the candidate evidence contains no education information,
+  `education_match` must be `unclear`.
 - **Partial match:** Python and SQL are evidenced but Kubernetes is absent.
   Kubernetes must appear as a required gap; verdict is `partial_match` or
   `weak_match`. Its score must rank above the essential-skill-gap and unrelated
   cases.
 - **Missing essential skills:** only Python is evidenced among requirements;
   PyTorch, CUDA, and distributed training must be reported missing. Verdict is
-  `weak_match` or `poor_match`.
+  `weak_match` or `poor_match`. The job's generic 5+ years requirement is met
+  by the candidate's five reported years, so `experience_match` must be
+  `matched`; missing production GPU-training experience remains a separate gap.
 - **Unrelated role:** an accounting resume is compared with an ML platform
   role. Core ML requirements must not be claimed as strengths/matched skills;
   verdict is `weak_match` or `poor_match`.
