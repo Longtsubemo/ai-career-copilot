@@ -210,7 +210,7 @@ No screenshots or hosted demo are currently included. Follow the local setup abo
 
 ## License
 
-No license file is currently present, so this repository does not yet grant general permission to use, modify, or redistribute the project. The repository owner should choose a license; MIT is one possible candidate, but no license has been added here.
+This project is licensed under the [MIT License](LICENSE). It applies to project material the copyright holder is entitled to license. Third-party dependencies and other externally sourced material retain their own licenses and terms; generated or user-provided content is not claimed by this notice.
 
 ## Project documentation
 
