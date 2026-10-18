@@ -35,6 +35,19 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite-*
+*.dump
+*.backup
+*.bak
+*.sql
+*.sql.gz
+
+# Local user uploads/data are not application source. Uploaded resume text is
+# currently stored in PostgreSQL, but keep common local export/storage paths out
+# of Git if developers add local tooling later.
+uploads/
+user-data/
+local-data/
 
 # ===========================================
 # Logs
