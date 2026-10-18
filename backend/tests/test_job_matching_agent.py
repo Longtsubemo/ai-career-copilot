@@ -371,8 +371,8 @@ class TestMatchResult:
 
 
 class TestPrompt:
-    def test_prompt_version_is_the_agreed_v1(self) -> None:
-        assert PROMPT_VERSION == "job-matching-v1"
+    def test_prompt_version_is_the_agreed_v2(self) -> None:
+        assert PROMPT_VERSION == "job-matching-v2"
 
     def test_prompt_contains_job_evidence(self) -> None:
         prompt = build_matching_prompt(**PROMPT_ARGS)
@@ -428,6 +428,56 @@ class TestPrompt:
         assert "required skills more heavily" in SYSTEM_INSTRUCTION
         assert "unclear" in SYSTEM_INSTRUCTION
         assert "Return only the JSON object" in SYSTEM_INSTRUCTION
+
+    def test_system_instruction_distinguishes_missing_from_absent_evidence(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split())
+        assert '"not evidenced"' in instruction
+        assert "an omission means its status is unknown" in instruction
+        assert (
+            "only when the supplied candidate evidence explicitly says so"
+            in instruction
+        )
+
+    def test_system_instruction_uses_the_job_stated_experience_requirement(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split())
+        assert (
+            "For a generic total-years requirement, compare total professional tenure."
+            in instruction
+        )
+        assert "unrelated tenure does not satisfy it" in instruction
+        assert (
+            '"unclear" when dates or role relevance cannot be established'
+            in instruction
+        )
+
+    def test_matching_output_contract_remains_unchanged(self) -> None:
+        assert set(MatchResult.model_fields) == {
+            "score",
+            "verdict",
+            "matched_skills",
+            "missing_required_skills",
+            "missing_preferred_skills",
+            "strengths",
+            "gaps",
+            "experience_match",
+            "education_match",
+            "location_match",
+            "seniority_match",
+            "rationale",
+            "confidence",
+        }
+        assert {value.value for value in MatchVerdict} == {
+            "strong_match",
+            "good_match",
+            "partial_match",
+            "weak_match",
+            "poor_match",
+        }
+        assert {value.value for value in MatchSignal} == {
+            "matched",
+            "mismatched",
+            "unclear",
+        }
 
 
 class TestRegistration:
@@ -816,11 +866,11 @@ class TestMatchingWithDatabase:
             resume_document_id=world.resume.id,
         )
 
-        v2 = JobMatchingAgent(
+        v3 = JobMatchingAgent(
             FakeGeminiClient(MATCH_V2, model="gemini-other"),
-            prompt_version="job-matching-v2",
+            prompt_version="job-matching-v3",
         )
-        second_envelope = v2.match(
+        second_envelope = v3.match(
             session,
             job_id=world.job.id,
             candidate_id=world.candidate.id,
@@ -829,7 +879,7 @@ class TestMatchingWithDatabase:
 
         assert first_envelope["prompt_version"] == PROMPT_VERSION
         assert first_envelope["match"] == MATCH.model_dump(mode="json")
-        assert second_envelope["prompt_version"] == "job-matching-v2"
+        assert second_envelope["prompt_version"] == "job-matching-v3"
         assert second_envelope["model"] == "gemini-other"
         assert second_envelope["match"] == MATCH_V2.model_dump(mode="json")
         assert match_count(session) == 2
@@ -838,13 +888,13 @@ class TestMatchingWithDatabase:
             select(Match).where(Match.job_id == world.job.id)
         ).all()
         by_version = {row.prompt_version: row for row in rows}
-        assert set(by_version) == {PROMPT_VERSION, "job-matching-v2"}
+        assert set(by_version) == {PROMPT_VERSION, "job-matching-v3"}
         assert by_version[PROMPT_VERSION].score == 72.5
         assert by_version[PROMPT_VERSION].verdict is not None
         assert by_version[PROMPT_VERSION].verdict["verdict"] == "good_match"
-        assert by_version["job-matching-v2"].score == 41.0
-        assert by_version["job-matching-v2"].verdict is not None
-        assert by_version["job-matching-v2"].verdict["verdict"] == "weak_match"
+        assert by_version["job-matching-v3"].score == 41.0
+        assert by_version["job-matching-v3"].verdict is not None
+        assert by_version["job-matching-v3"].verdict["verdict"] == "weak_match"
 
     def test_conflicting_persist_keeps_the_first_writer(self, session, world) -> None:
         first = MatchResult(

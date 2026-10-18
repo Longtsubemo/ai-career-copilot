@@ -4,8 +4,8 @@
 idempotency key and is half of the ``matches`` unique scope. Any change to
 the system instruction or to :func:`build_matching_prompt` is a behavior
 change and MUST bump ``PROMPT_VERSION`` — silently editing a prompt under
-the same version would let two different assessments claim to be
-``job-matching-v1``.
+the same version would let different assessments claim to be the same
+prompt version.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 
-PROMPT_VERSION = "job-matching-v1"
+PROMPT_VERSION = "job-matching-v2"
 
 SYSTEM_INSTRUCTION = """\
 You are a candidate-job matching evaluator. You receive two blocks of
@@ -29,6 +29,20 @@ Rules:
 - Absence of information is not evidence of a mismatch: when the
   evidence does not address something, report it as "unclear" instead
   of guessing a negative.
+- Distinguish an unmentioned qualification from an explicitly absent
+  one. Describe an unmentioned skill, certification, or other
+  qualification as "not evidenced", "not listed", or needing
+  verification; do not claim the candidate lacks it.
+- For a required or mandatory qualification, an omission means its
+  status is unknown: do not claim it is fulfilled or confirmed absent.
+  Identify the evidence gap. State that a qualification is absent or
+  not held only when the supplied candidate evidence explicitly says so.
+- Judge experience against the job's stated requirement. For a generic
+  total-years requirement, compare total professional tenure. For an
+  explicitly relevant-role requirement, use only experience supported
+  as relevant; unrelated tenure does not satisfy it. Use "mismatched"
+  only when the evidence establishes the requirement is not met, and
+  "unclear" when dates or role relevance cannot be established.
 - Evaluate required skills more heavily than preferred skills. A
   missing required skill is a major gap; a missing preferred skill is
   a minor one.
