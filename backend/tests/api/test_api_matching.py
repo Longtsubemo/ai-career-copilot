@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, select
 
-from app.agents.job_matching import MatchResult
+from app.agents.job_matching import MatchResult, PROMPT_VERSION
 from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.match import Match
@@ -58,7 +58,7 @@ def test_match_defaults_to_the_current_candidate_and_resume(client_factory, sess
     assert body["output"]["candidate_id"] == str(world.candidate.id)
     assert body["output"]["resume_document_id"] == str(world.resume.id)
     assert body["output"]["job_analysis_id"] == str(world.analysis.id)
-    assert body["output"]["prompt_version"] == "job-matching-v1"
+    assert body["output"]["prompt_version"] == PROMPT_VERSION
     assert body["output"]["match"]["score"] == 72.5
     assert body["output"]["match"]["verdict"] == "good_match"
     assert len(gemini.calls) == 1

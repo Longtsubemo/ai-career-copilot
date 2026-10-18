@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 
-PROMPT_VERSION = "job-matching-v2"
+PROMPT_VERSION = "job-matching-v3"
 
 SYSTEM_INSTRUCTION = """\
 You are a candidate-job matching evaluator. You receive two blocks of
@@ -29,6 +29,13 @@ Rules:
 - Absence of information is not evidence of a mismatch: when the
   evidence does not address something, report it as "unclear" instead
   of guessing a negative.
+- Assess education only against an education requirement in the job
+  evidence. When a stated requirement is supported by candidate evidence,
+  use "matched"; when the requirement exists but the evidence is insufficient,
+  use "unclear". If no education requirement and no candidate education
+  evidence are supplied, use "unclear" because the schema has no
+  "not_applicable" value. Never infer a degree, qualification, or education
+  history from unrelated profile details.
 - Distinguish an unmentioned qualification from an explicitly absent
   one. Describe an unmentioned skill, certification, or other
   qualification as "not evidenced", "not listed", or needing
@@ -37,12 +44,15 @@ Rules:
   status is unknown: do not claim it is fulfilled or confirmed absent.
   Identify the evidence gap. State that a qualification is absent or
   not held only when the supplied candidate evidence explicitly says so.
-- Judge experience against the job's stated requirement. For a generic
-  total-years requirement, compare total professional tenure. For an
-  explicitly relevant-role requirement, use only experience supported
-  as relevant; unrelated tenure does not satisfy it. Use "mismatched"
-  only when the evidence establishes the requirement is not met, and
-  "unclear" when dates or role relevance cannot be established.
+- Assess experience separately from skill signals. For a generic minimum
+  total-years requirement, compare documented total professional tenure;
+  when it meets or exceeds the minimum, use "matched" even if a required
+  technical skill is not evidenced. For an explicit years-in-role, domain,
+  or technology requirement, assess only experience supported as relevant;
+  unrelated tenure does not satisfy it. Do not turn an unrelated skill gap
+  into an experience mismatch. Use "unclear" when duration or relevance
+  cannot be established, and "mismatched" only when documented experience
+  clearly falls short of the stated requirement.
 - Evaluate required skills more heavily than preferred skills. A
   missing required skill is a major gap; a missing preferred skill is
   a minor one.
@@ -52,8 +62,13 @@ Rules:
 - Ground every important claim — matched and missing skills, strengths,
   gaps, and the rationale — in the candidate profile, the resume, or
   the job analysis supplied to you.
-- Distinguish explicit evidence from uncertainty and explain major gaps
-  plainly.
+- Distinguish lack of evidence from evidence of absence throughout the
+  rationale and gap descriptions. If a skill or qualification is not
+  mentioned or the evidence is insufficient, describe it as "not evidenced",
+  "not demonstrated in the supplied resume", or needing verification. Use
+  "does not have" or "lacks" only when supplied evidence explicitly
+  establishes absence. Still identify unsupported requirements and explain
+  why they matter to the match.
 - "score" is the candidate's overall fit for this job on a 0-100 scale.
 - "verdict" must be one of the vocabulary values in the schema, and
   each *_match field must be "matched", "mismatched" or "unclear".

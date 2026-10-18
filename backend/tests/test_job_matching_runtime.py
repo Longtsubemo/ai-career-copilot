@@ -331,12 +331,12 @@ def test_new_prompt_version_creates_a_second_run_and_match_row(
     register_job_matching_handler(
         v2_registry,
         gemini=FakeGeminiClient(MATCH),
-        prompt_version="job-matching-v2",
+        prompt_version="job-matching-v4",
     )
     v2_runtime = AgentRuntime(session, registry=v2_registry)
     v2_run = v2_runtime.create_run(
         agent_name=JOB_MATCHING_AGENT_NAME,
-        idempotency_key=match_key(world, "job-matching-v2"),
+        idempotency_key=match_key(world, "job-matching-v4"),
         input=match_payload(world),
     )
     finished_v2 = v2_runtime.run_next(agent_name=JOB_MATCHING_AGENT_NAME)
@@ -344,14 +344,14 @@ def test_new_prompt_version_creates_a_second_run_and_match_row(
     assert finished_v2 is not None and finished_v2.status == RunStatus.succeeded
     assert v2_run.id != v1_run.id
     assert finished_v2.output is not None
-    assert finished_v2.output["prompt_version"] == "job-matching-v2"
+    assert finished_v2.output["prompt_version"] == "job-matching-v4"
 
     versions = set(
         session.scalars(
             select(Match.prompt_version).where(Match.job_id == world.job.id)
         ).all()
     )
-    assert versions == {PROMPT_VERSION, "job-matching-v2"}
+    assert versions == {PROMPT_VERSION, "job-matching-v4"}
     assert match_count(session) == 2
 
 
