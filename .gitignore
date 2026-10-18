@@ -28,6 +28,9 @@ build/
 .coverage
 htmlcov/
 
+# Explicitly invoked synthetic Gemini evaluation output
+backend/artifacts/job-matching-evaluations/
+
 # ===========================================
 # Databases (Postgres runs in Docker;
 # local scratch DBs must not be committed)

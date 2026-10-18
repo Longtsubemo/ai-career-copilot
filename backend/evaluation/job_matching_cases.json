@@ -1,0 +1,290 @@
+[
+  {
+    "id": "strong-retrieval-engineer",
+    "scenario": "strong_match",
+    "job": {
+      "title": "Retrieval Systems Engineer",
+      "company_name": "Fictional Northstar Labs",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "4+ years",
+      "analysis": {
+        "summary": "Build and operate retrieval features for an AI product.",
+        "confidence": 0.98,
+        "required_skills": ["Python", "PyTorch", "Hugging Face Transformers"],
+        "preferred_skills": ["vector search"],
+        "responsibilities": ["Ship retrieval pipelines", "Measure search quality"],
+        "qualifications": ["Experience operating ML services"],
+        "experience_years_min": 4,
+        "experience_years_max": null,
+        "seniority": "senior",
+        "remote_type": "remote",
+        "domain_keywords": ["retrieval augmented generation"],
+        "technologies": ["Python", "PyTorch"],
+        "education_requirements": [],
+        "certifications": [],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Mira Sol",
+      "headline": "Senior ML Engineer",
+      "location": "Remote",
+      "years_of_experience": 6,
+      "seniority": "senior",
+      "skills": ["Python", "PyTorch", "Hugging Face Transformers", "vector search"],
+      "summary": "Six years building and operating production ML services.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Cedar Systems, built Python and PyTorch retrieval pipelines with Hugging Face Transformers, launched vector search, and measured relevance in production."
+    },
+    "expectations": {
+      "allowed_verdicts": ["strong_match", "good_match"],
+      "must_match_skills": ["Python", "PyTorch", "Hugging Face Transformers"],
+      "must_be_missing_required": [],
+      "must_be_unclear": [],
+      "must_not_claim_positive": [],
+      "must_identify_gaps": [],
+      "score_above": ["partial-data-platform", "missing-essential-ml", "unrelated-accounting"]
+    }
+  },
+  {
+    "id": "partial-data-platform",
+    "scenario": "partial_match",
+    "job": {
+      "title": "Data Platform Engineer",
+      "company_name": "Fictional Juniper Works",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "3+ years",
+      "analysis": {
+        "summary": "Maintain data services used by analytics teams.",
+        "confidence": 0.95,
+        "required_skills": ["Python", "SQL", "Kubernetes"],
+        "preferred_skills": ["Terraform"],
+        "responsibilities": ["Build data APIs", "Operate containerized services"],
+        "qualifications": ["Experience supporting production data systems"],
+        "experience_years_min": 3,
+        "experience_years_max": null,
+        "seniority": "mid",
+        "remote_type": "remote",
+        "domain_keywords": ["data platform"],
+        "technologies": ["Python", "SQL", "Kubernetes"],
+        "education_requirements": [],
+        "certifications": [],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Noah Vale",
+      "headline": "Backend Data Engineer",
+      "location": "Remote",
+      "years_of_experience": 4,
+      "seniority": "mid",
+      "skills": ["Python", "SQL", "FastAPI"],
+      "summary": "Builds data APIs and relational data workflows.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Lumen Archive, built Python data APIs with FastAPI and optimized SQL queries. Operated services on virtual machines; Kubernetes experience is not listed."
+    },
+    "expectations": {
+      "allowed_verdicts": ["partial_match", "weak_match"],
+      "must_match_skills": ["Python", "SQL"],
+      "must_be_missing_required": ["Kubernetes"],
+      "must_be_unclear": [],
+      "must_not_claim_positive": [],
+      "must_identify_gaps": ["Kubernetes"],
+      "score_above": ["missing-essential-ml", "unrelated-accounting"]
+    }
+  },
+  {
+    "id": "missing-essential-ml",
+    "scenario": "missing_essential_skills",
+    "job": {
+      "title": "Applied ML Systems Engineer",
+      "company_name": "Fictional Red Kite Robotics",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "5+ years",
+      "analysis": {
+        "summary": "Train and deploy computer vision models on accelerated hardware.",
+        "confidence": 0.97,
+        "required_skills": ["Python", "PyTorch", "CUDA", "distributed training"],
+        "preferred_skills": ["TensorRT"],
+        "responsibilities": ["Train vision models", "Optimize GPU inference"],
+        "qualifications": ["Production GPU training experience"],
+        "experience_years_min": 5,
+        "experience_years_max": null,
+        "seniority": "senior",
+        "remote_type": "remote",
+        "domain_keywords": ["computer vision", "GPU"],
+        "technologies": ["Python", "PyTorch", "CUDA"],
+        "education_requirements": [],
+        "certifications": [],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Iris Fen",
+      "headline": "Data Analyst",
+      "location": "Remote",
+      "years_of_experience": 5,
+      "seniority": "mid",
+      "skills": ["Python", "SQL", "pandas"],
+      "summary": "Analyzes business data and builds reporting workflows.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Paper Birch Co., used Python, pandas, and SQL to prepare datasets and automate weekly reports. No model training or GPU work is described."
+    },
+    "expectations": {
+      "allowed_verdicts": ["weak_match", "poor_match"],
+      "must_match_skills": ["Python"],
+      "must_be_missing_required": ["PyTorch", "CUDA", "distributed training"],
+      "must_be_unclear": [],
+      "must_not_claim_positive": ["PyTorch", "CUDA", "distributed training"],
+      "must_identify_gaps": ["PyTorch", "CUDA", "distributed training"],
+      "score_above": []
+    }
+  },
+  {
+    "id": "unrelated-accounting",
+    "scenario": "unrelated_role",
+    "job": {
+      "title": "Machine Learning Platform Engineer",
+      "company_name": "Fictional Silver Fern Analytics",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "3+ years",
+      "analysis": {
+        "summary": "Build infrastructure for training and serving machine learning models.",
+        "confidence": 0.96,
+        "required_skills": ["Python", "PyTorch", "model deployment"],
+        "preferred_skills": ["Kubernetes"],
+        "responsibilities": ["Deploy models", "Monitor inference services"],
+        "qualifications": ["Experience with ML infrastructure"],
+        "experience_years_min": 3,
+        "experience_years_max": null,
+        "seniority": "mid",
+        "remote_type": "remote",
+        "domain_keywords": ["machine learning infrastructure"],
+        "technologies": ["Python", "PyTorch"],
+        "education_requirements": [],
+        "certifications": [],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Elio March",
+      "headline": "Staff Accountant",
+      "location": "Remote",
+      "years_of_experience": 8,
+      "seniority": "senior",
+      "skills": ["accounts payable", "financial reporting", "ledger reconciliation"],
+      "summary": "Accounting professional focused on monthly close and financial controls.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Sunstone Ledger, reconciled accounts, prepared monthly financial statements, and coordinated audit evidence. No software engineering or machine learning work is described."
+    },
+    "expectations": {
+      "allowed_verdicts": ["weak_match", "poor_match"],
+      "must_match_skills": [],
+      "must_be_missing_required": ["Python", "PyTorch", "model deployment"],
+      "must_be_unclear": [],
+      "must_not_claim_positive": ["Python", "PyTorch", "model deployment"],
+      "must_identify_gaps": ["Python", "PyTorch", "model deployment"],
+      "score_above": []
+    }
+  },
+  {
+    "id": "unsupported-cloud-qualification",
+    "scenario": "unsupported_qualification",
+    "job": {
+      "title": "Cloud AI Engineer",
+      "company_name": "Fictional Blue Heron Compute",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "3+ years",
+      "analysis": {
+        "summary": "Deploy cloud-hosted machine learning services.",
+        "confidence": 0.94,
+        "required_skills": ["Python", "Docker"],
+        "preferred_skills": ["Vertex AI"],
+        "responsibilities": ["Deploy model APIs", "Monitor cloud workloads"],
+        "qualifications": ["Experience deploying cloud AI services"],
+        "experience_years_min": 3,
+        "experience_years_max": null,
+        "seniority": "mid",
+        "remote_type": "remote",
+        "domain_keywords": ["cloud AI"],
+        "technologies": ["Python", "Docker", "Vertex AI"],
+        "education_requirements": [],
+        "certifications": ["Google Professional Machine Learning Engineer certification required"],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Talia Reed",
+      "headline": "Cloud ML Developer",
+      "location": "Remote",
+      "years_of_experience": 4,
+      "seniority": "mid",
+      "skills": ["Python", "Docker", "Vertex AI"],
+      "summary": "Builds cloud-hosted model APIs and internal prototypes.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Cloudberry Studio, built a Python model API in Docker and tested a Vertex AI prototype. The resume lists no professional certifications."
+    },
+    "expectations": {
+      "allowed_verdicts": [],
+      "must_match_skills": ["Python", "Docker"],
+      "must_be_missing_required": [],
+      "must_be_unclear": [],
+      "must_not_claim_positive": ["Google Professional Machine Learning Engineer certification"],
+      "must_identify_gaps": ["Google Professional Machine Learning Engineer certification"],
+      "score_above": []
+    }
+  },
+  {
+    "id": "missing-education-and-experience-evidence",
+    "scenario": "missing_evidence",
+    "job": {
+      "title": "NLP Engineer",
+      "company_name": "Fictional Mosslight Research",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "2-5 years",
+      "analysis": {
+        "summary": "Develop and evaluate natural language processing features.",
+        "confidence": 0.93,
+        "required_skills": ["Python", "Hugging Face Transformers"],
+        "preferred_skills": ["spaCy"],
+        "responsibilities": ["Build text-processing pipelines", "Evaluate model quality"],
+        "qualifications": ["Two or more years of relevant work", "Bachelor's degree or equivalent"],
+        "experience_years_min": 2,
+        "experience_years_max": 5,
+        "seniority": "mid",
+        "remote_type": "remote",
+        "domain_keywords": ["natural language processing"],
+        "technologies": ["Python", "Hugging Face Transformers"],
+        "education_requirements": ["Bachelor's degree or equivalent"],
+        "certifications": [],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Oren Lake",
+      "headline": "NLP Developer",
+      "location": "Remote",
+      "years_of_experience": null,
+      "seniority": null,
+      "skills": ["Python", "Hugging Face Transformers"],
+      "summary": "Builds text classification and document search prototypes.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Amber Finch Lab, built Python text classification and document search prototypes with Hugging Face Transformers. The resume contains no employment dates or education history."
+    },
+    "expectations": {
+      "allowed_verdicts": [],
+      "must_match_skills": ["Python", "Hugging Face Transformers"],
+      "must_be_missing_required": [],
+      "must_be_unclear": ["experience_match", "education_match"],
+      "must_not_claim_positive": [],
+      "must_identify_gaps": [],
+      "score_above": []
+    }
+  }
+]
