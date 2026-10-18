@@ -42,8 +42,12 @@ from tests.factories import unique_suffix
 
 T1 = datetime(2026, 1, 15, tzinfo=timezone.utc)
 
-URL_A = "https://boards.example.com/jobs/42"
-URL_B = "https://jobs.example.com/role/99"
+URL_A = "https://boards.greenhouse.io/acme/jobs/127817"
+URL_B = "https://boards.greenhouse.io/acme/jobs/127818"
+SITE_HINT = (
+    "(site:boards.greenhouse.io OR site:jobs.ashbyhq.com OR "
+    "site:jobs.lever.co OR site:jobs.smartrecruiters.com)"
+)
 
 REQUEST = DiscoveryRequest(
     role="AI Engineer", location="Bangalore", experience="1-3 years"
@@ -140,8 +144,8 @@ def test_discovery_run_completes_and_stores_structured_output(
     assert output["errors"] == []
     assert len(output["job_ids"]) == 2
     assert searxng.queries == [
-        "AI Engineer Bangalore jobs 1-3 years",
-        "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+        f"AI Engineer Bangalore jobs 1-3 years {SITE_HINT}",
+        f"Artificial Intelligence Engineer Bangalore jobs 1-3 years {SITE_HINT}",
     ]
 
     persisted = session.scalar(
@@ -254,7 +258,7 @@ def test_concurrent_discovery_upserts_never_create_duplicates(
     engine: Engine,
 ) -> None:
     suffix = unique_suffix()
-    url = f"https://example.com/jobs/concurrent-{suffix}"
+    url = f"https://boards.greenhouse.io/acme/jobs/{suffix}"
     company_name = f"Concurrent Holdings {suffix}"
     canonical = canonicalize_url(url)
     normalized = normalize_company_name(company_name)

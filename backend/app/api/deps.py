@@ -34,6 +34,7 @@ NO_MASTER_RESUME_DETAIL = (
     "no master resume uploaded yet; upload one with POST /api/resumes/master"
 )
 NOT_AUTHENTICATED_DETAIL = "authentication required"
+RESUME_AI_DISABLED_DETAIL = "resume AI features are disabled"
 
 
 def get_registry(request: Request) -> HandlerRegistry:
@@ -89,6 +90,12 @@ def get_current_user(
     return auth_session.user
 
 
+def ensure_resume_ai_enabled() -> None:
+    """Fail closed before an endpoint stores or sends resume content."""
+    if not get_settings().enable_resume_ai:
+        raise HTTPException(status_code=403, detail=RESUME_AI_DISABLED_DETAIL)
+
+
 def get_current_candidate(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_db),
@@ -109,6 +116,8 @@ __all__ = [
     "NO_CANDIDATE_DETAIL",
     "NO_MASTER_RESUME_DETAIL",
     "NOT_AUTHENTICATED_DETAIL",
+    "RESUME_AI_DISABLED_DETAIL",
+    "ensure_resume_ai_enabled",
     "get_current_candidate",
     "get_current_session",
     "get_current_user",

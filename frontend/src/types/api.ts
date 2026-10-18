@@ -167,6 +167,8 @@ export interface DiscoveryOutput {
   duplicates_skipped: number;
   scrape_attempts: number;
   extractions_succeeded: number;
+  /** Missing from discovery outputs persisted before this counter was added. */
+  page_validation_failures?: number;
   listings_skipped: number;
   invalid_results: number;
   malformed_results: number;

@@ -66,6 +66,7 @@ _RUN_FAILURE_STATUS: dict[str, int] = {
     "InvalidTransitionError": 409,
     "JobAnalysisNotFoundError": 409,
     "FirecrawlError": 503,
+    "FirecrawlSearchError": 503,
     "GeminiError": 503,
     "SearXNGError": 503,
 }

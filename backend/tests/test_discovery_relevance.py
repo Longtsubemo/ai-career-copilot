@@ -28,6 +28,10 @@ from app.agents.discovery.extract import ExtractedJob
 REQUEST = DiscoveryRequest(
     role="AI Engineer", location="Bengaluru", experience="1-3 years"
 )
+SUPPORTED_SITE_HINT = (
+    "(site:boards.greenhouse.io OR site:jobs.ashbyhq.com OR "
+    "site:jobs.lever.co OR site:jobs.smartrecruiters.com)"
+)
 
 
 def make_job(**overrides: object) -> ExtractedJob:
@@ -167,8 +171,8 @@ class TestBoundedQueryExpansion:
 
     def test_known_role_appends_one_alias_query(self) -> None:
         assert build_search_queries(REQUEST) == [
-            "AI Engineer Bengaluru jobs 1-3 years",
-            "Artificial Intelligence Engineer Bengaluru jobs 1-3 years",
+            f"AI Engineer Bengaluru jobs 1-3 years {SUPPORTED_SITE_HINT}",
+            f"Artificial Intelligence Engineer Bengaluru jobs 1-3 years {SUPPORTED_SITE_HINT}",
         ]
 
     def test_ml_alias_expansion(self) -> None:
@@ -176,8 +180,8 @@ class TestBoundedQueryExpansion:
             role="ML Engineer", location="Bangalore", experience="2 years"
         )
         assert build_search_queries(request) == [
-            "ML Engineer Bangalore jobs 2 years",
-            "Machine Learning Engineer Bangalore jobs 2 years",
+            f"ML Engineer Bangalore jobs 2 years {SUPPORTED_SITE_HINT}",
+            f"Machine Learning Engineer Bangalore jobs 2 years {SUPPORTED_SITE_HINT}",
         ]
 
     def test_role_outside_the_taxonomy_does_not_expand(self) -> None:
@@ -185,7 +189,7 @@ class TestBoundedQueryExpansion:
             role="Data Scientist", location="Bangalore", experience="1-3 years"
         )
         assert build_search_queries(request) == [
-            "Data Scientist Bangalore jobs 1-3 years"
+            f"Data Scientist Bangalore jobs 1-3 years {SUPPORTED_SITE_HINT}"
         ]
 
     def test_role_with_extra_tokens_does_not_expand(self) -> None:
@@ -193,12 +197,12 @@ class TestBoundedQueryExpansion:
             role="Senior AI Engineer", location="Bangalore", experience="1-3 years"
         )
         assert build_search_queries(request) == [
-            "Senior AI Engineer Bangalore jobs 1-3 years"
+            f"Senior AI Engineer Bangalore jobs 1-3 years {SUPPORTED_SITE_HINT}"
         ]
 
     def test_max_queries_bounds_the_expansion(self) -> None:
         assert build_search_queries(REQUEST, max_queries=1) == [
-            "AI Engineer Bengaluru jobs 1-3 years"
+            f"AI Engineer Bengaluru jobs 1-3 years {SUPPORTED_SITE_HINT}"
         ]
 
     def test_max_queries_must_be_positive(self) -> None:

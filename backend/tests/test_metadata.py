@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "candidates",
     "companies",
     "documents",
+    "discovery_daily_usage",
     "job_analyses",
     "jobs",
     "matches",
@@ -109,7 +110,8 @@ def test_application_has_snapshot_columns() -> None:
 
 
 @pytest.mark.parametrize(
-    "table_name", sorted(EXPECTED_TABLES)
+    # Daily usage is a compact date/scope counter, not an audited entity.
+    "table_name", sorted(EXPECTED_TABLES - {"discovery_daily_usage"})
 )
 def test_every_table_carries_timestamp_columns(table_name: str) -> None:
     columns = set(Base.metadata.tables[table_name].columns.keys())

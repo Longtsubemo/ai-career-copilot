@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.api.deps import NO_CANDIDATE_DETAIL, NO_MASTER_RESUME_DETAIL
+from app.core.config import Settings
 from app.models.document import Document
 from app.models.enums import DocumentKind
 from app.services.resume_upload import MAX_RESUME_BYTES
@@ -42,6 +43,28 @@ def test_upload_requires_authentication(client, session):
     )
 
     assert response.status_code == 401
+    assert session.execute(select(Document)).scalars().all() == []
+
+
+def test_resume_upload_is_disabled_without_storing_content(
+    client_factory, session, monkeypatch
+):
+    candidate = build_candidate(session)
+    client = client_factory()
+    login(client, candidate.user)
+    monkeypatch.setattr(
+        "app.api.deps.get_settings",
+        lambda: Settings(_env_file=None, enable_resume_ai=False),
+    )
+    marker = b"private resume marker"
+
+    response = client.post(
+        "/api/resumes/master",
+        files={"file": ("resume.txt", marker, "text/plain")},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "resume AI features are disabled"}
     assert session.execute(select(Document)).scalars().all() == []
 
 

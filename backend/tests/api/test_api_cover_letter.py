@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from app.agents.cover_letter import CoverLetterResult
 from app.agents.job_matching import MatchResult
+from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.document import Document
 from app.models.enums import DocumentKind
@@ -55,6 +56,28 @@ def test_generate_a_cover_letter(client_factory, session):
     assert letter.agent_run_id == UUID(body["id"])
     assert letter.model == "gemini-3.8-flash"
     assert letter.prompt_version == "cover-letter-v1"
+
+
+def test_cover_letter_is_disabled_without_gemini_or_document_write(
+    client_factory, session, monkeypatch
+):
+    world = build_full_world(session)
+    gemini = FakeGeminiClient(LETTER)
+    client = client_factory(gemini=gemini)
+    login(client, world.candidate.user)
+    before_documents = session.scalar(select(func.count()).select_from(Document))
+    monkeypatch.setattr(
+        "app.api.deps.get_settings",
+        lambda: Settings(_env_file=None, enable_resume_ai=False),
+    )
+
+    response = client.post(f"/api/jobs/{world.job.id}/cover-letter")
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "resume AI features are disabled"}
+    assert gemini.calls == []
+    assert session.scalar(select(func.count()).select_from(AgentRun)) == 0
+    assert session.scalar(select(func.count()).select_from(Document)) == before_documents
 
 
 def test_repeated_generation_reuses_the_run_and_the_document(

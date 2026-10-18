@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import Scope
 
 from app.agents.cover_letter import register_cover_letter_handler
 from app.agents.discovery import register_discovery_handler
@@ -19,14 +24,33 @@ from app.core.logging import configure_logging
 
 if TYPE_CHECKING:
     from app.clients.gemini import GeminiClient
-    from app.clients.searxng import SearXNGClient
+    from app.clients.search import SearchClient
+
+DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+class _SPAStaticFiles(StaticFiles):
+    """Serve the Vite entrypoint for browser routes, never for API paths."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            if path == "api" or path.startswith("api/"):
+                return JSONResponse(status_code=404, content={"detail": "Not Found"})
+            if scope["method"] not in {"GET", "HEAD"}:
+                raise
+            return await super().get_response("index.html", scope)
 
 
 def create_app(
     *,
-    searxng: SearXNGClient | None = None,
+    searxng: SearchClient | None = None,
     firecrawl: FirecrawlClient | None = None,
     gemini: GeminiClient | None = None,
+    frontend_dist_dir: str | Path | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -68,6 +92,40 @@ def create_app(
     register_cover_letter_handler(registry, gemini=gemini)
     app.state.agent_registry = registry
     app.state.firecrawl = firecrawl_client
+
+    static_dir: Path | None = None
+    if frontend_dist_dir is not None:
+        static_dir = Path(frontend_dist_dir)
+    elif settings.environment.casefold() == "production":
+        static_dir = DEFAULT_FRONTEND_DIST
+
+    if static_dir is not None:
+        if not (static_dir / "index.html").is_file():
+            raise RuntimeError("frontend build output is missing or incomplete")
+
+        def unknown_api_path() -> JSONResponse:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+        api_not_found_methods = [
+            "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
+        ]
+        app.add_api_route(
+            "/api", unknown_api_path,
+            methods=api_not_found_methods,
+            include_in_schema=False,
+        )
+        app.add_api_route(
+            "/api/{path:path}", unknown_api_path,
+            methods=api_not_found_methods,
+            include_in_schema=False,
+        )
+        # StaticFiles resolves paths beneath its configured directory and
+        # serves index.html for client-side routes when html=True.
+        app.mount(
+            "/",
+            _SPAStaticFiles(directory=str(static_dir), html=True),
+            name="frontend",
+        )
 
     return app
 

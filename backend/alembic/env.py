@@ -10,7 +10,10 @@ import app.models  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Alembic is also invoked from tests and administrative commands inside
+    # the application process. Preserve already-configured application/test
+    # loggers instead of disabling them as fileConfig does by default.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

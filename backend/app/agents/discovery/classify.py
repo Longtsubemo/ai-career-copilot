@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from urllib.parse import parse_qsl, urlsplit, urlunsplit
+from urllib.parse import SplitResult, parse_qsl, unquote, urlsplit, urlunsplit
 
 from app.clients.firecrawl import CrawlResult
 
@@ -162,6 +162,10 @@ _CLOSURE_MARKERS = (
 )
 
 _URL_MAX_LENGTH = 300
+_TOKEN_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{20,}$")
+_JWT_PATH_SEGMENT = re.compile(
+    r"^[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$"
+)
 
 _STATUS_METADATA_KEYS = ("status", "status_code", "statuscode")
 
@@ -221,13 +225,18 @@ def classify_page(crawl: CrawlResult | None) -> UrlQuality:
     ):
         return UrlQuality.individual
 
-    haystack = " ".join(
-        value for value in (crawl.markdown,) if isinstance(value, str)
-    ).casefold()
-    if haystack and any(marker in haystack for marker in _LISTING_TEXT_MARKERS):
+    if has_listing_text(crawl):
         return UrlQuality.listing
 
     return UrlQuality.unknown
+
+
+def has_listing_text(crawl: CrawlResult | None) -> bool:
+    """Return whether page text contains a known search/listing marker."""
+    if crawl is None or not isinstance(crawl.markdown, str):
+        return False
+    haystack = crawl.markdown.casefold()
+    return any(marker in haystack for marker in _LISTING_TEXT_MARKERS)
 
 
 def resolve_quality(url_quality: UrlQuality, page_quality: UrlQuality) -> UrlQuality:
@@ -284,13 +293,62 @@ def crawl_http_status(crawl: CrawlResult | None) -> int | None:
     return None
 
 
+def _validated_url_origin(url: str) -> tuple[SplitResult, str] | None:
+    """Parse an HTTP(S) URL and return its safe origin components."""
+    if not isinstance(url, str) or any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F or char == "\\"
+        for char in url
+    ):
+        return None
+    try:
+        parts = urlsplit(url.strip())
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        return None
+    scheme = parts.scheme.lower()
+    if scheme not in {"http", "https"} or not parts.netloc or not host:
+        return None
+    if any(char.isspace() or char in "/\\?#@[]" for char in host):
+        return None
+    authority = parts.netloc.rsplit("@", 1)[-1]
+    if authority.endswith(":"):
+        return None
+    host = host.lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = f"{host}:{port}" if port is not None else host
+    origin = urlunsplit((scheme, netloc, "", "", ""))
+    if len(origin) > _URL_MAX_LENGTH:
+        return None
+    return parts, origin
+
+
+def sanitize_public_url(url: str) -> str:
+    """Return only a validated HTTP(S) origin for public discovery output."""
+    parsed = _validated_url_origin(url)
+    if parsed is None:
+        return "<invalid-url>"
+    return parsed[1]
+
+
 def sanitize_url(url: str) -> str:
-    """Return a diagnostic-safe URL: scheme, host and path only, bounded."""
-    parts = urlsplit(url.strip())
-    if not parts.netloc:
-        return url.strip()[:_URL_MAX_LENGTH]
-    clean = urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, "", ""))
-    return clean[:_URL_MAX_LENGTH]
+    """Return a bounded diagnostic URL with sensitive components removed."""
+    parsed = _validated_url_origin(url)
+    if parsed is None:
+        return "<invalid-url>"
+    parts, origin = parsed
+    safe_segments = []
+    for segment in parts.path.split("/"):
+        decoded = unquote(segment)
+        if _TOKEN_PATH_SEGMENT.fullmatch(decoded) or _JWT_PATH_SEGMENT.fullmatch(
+            decoded
+        ):
+            safe_segments.append("[redacted]")
+        else:
+            safe_segments.append(segment)
+    path = "/".join(safe_segments)
+    return f"{origin}{path}"[:_URL_MAX_LENGTH]
 
 
 def url_host(url: str) -> str:
@@ -327,8 +385,10 @@ __all__ = [
     "classify_url",
     "crawl_http_status",
     "has_closure_evidence",
+    "has_listing_text",
     "has_usable_content",
     "resolve_quality",
+    "sanitize_public_url",
     "sanitize_url",
     "url_host",
 ]

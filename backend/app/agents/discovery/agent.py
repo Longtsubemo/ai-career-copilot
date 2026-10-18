@@ -18,6 +18,7 @@ Two strict phases keep database work away from external HTTP:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,18 +26,13 @@ from datetime import datetime
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import func, text
+from sqlalchemy import func, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.agents.discovery.classify import (
-    UrlQuality,
-    classify_page,
-    classify_url,
     has_closure_evidence,
-    has_usable_content,
-    resolve_quality,
-    sanitize_url,
+    sanitize_public_url,
 )
 from app.agents.discovery.contract import (
     DISCOVERY_AGENT_NAME,
@@ -46,13 +42,27 @@ from app.agents.discovery.contract import (
     DiscoveryRequest,
     DiscoveryResult,
 )
-from app.agents.discovery.extract import ExtractedJob, extract_job, filter_check
+from app.agents.discovery.extract import (
+    ExtractedJob,
+    PageEvidenceFailure,
+    extract_page_evidence,
+    filter_check,
+    validate_page_evidence,
+)
 from app.agents.discovery.query import build_search_queries
+from app.agents.discovery.sources import (
+    DEFAULT_SOURCE_REGISTRY,
+    SourceKind,
+    SourceRegistry,
+    assess_source_url,
+)
 from app.agents.runtime.context import RunContext
 from app.agents.runtime.registry import HandlerRegistry
 from app.agents.runtime.runtime import utc_now
 from app.clients.firecrawl import CrawlResult, FirecrawlClient, FirecrawlError
-from app.clients.searxng import SearchResult, SearXNGClient, SearXNGError
+from app.clients.firecrawl_search import FirecrawlSearchClient
+from app.clients.search import SearchClient, SearchError, SearchResult
+from app.clients.searxng import SearXNGClient
 from app.core.config import get_settings
 from app.models.company import Company
 from app.models.enums import AvailabilityStatus, CrawlStatus
@@ -74,6 +84,7 @@ class _Counters:
     duplicates_skipped: int = 0
     scrape_attempts: int = 0
     extractions_succeeded: int = 0
+    page_validation_failures: int = 0
     listings_skipped: int = 0
     invalid_results: int = 0
     malformed_results: int = 0
@@ -82,12 +93,10 @@ class _Counters:
 
 @dataclass(frozen=True)
 class _Candidate:
-    """A deduplicated candidate URL, with its URL quality and rejection."""
+    """A deduplicated, persistable URL admitted to the crawl phase."""
 
     result: SearchResult
     canonical_url: str
-    quality: UrlQuality
-    rejection: str | None = None
 
 
 @dataclass(frozen=True)
@@ -127,7 +136,7 @@ def _record_issue(
         return
     issues.append(
         DiscoveryIssue(
-            url=sanitize_url(url),
+            url=sanitize_public_url(url),
             stage=stage,
             category=category,
             status=status,
@@ -152,7 +161,7 @@ def _crawl_failure_category(exc: FirecrawlError) -> DiscoveryIssueCategory:
 class DiscoveryAgent:
     """Deterministic job discovery driven by injected tool clients.
 
-    The agent depends on abstractions only: a SearXNG client for search, a
+    The agent depends on abstractions only: a search client for candidates, a
     Firecrawl client for page content, a clock for timestamps. The database
     session arrives per call from the runtime's :class:`RunContext`, never
     from the constructor.
@@ -160,13 +169,14 @@ class DiscoveryAgent:
 
     def __init__(
         self,
-        searxng: SearXNGClient,
+        searxng: SearchClient,
         firecrawl: FirecrawlClient,
         *,
         clock: Callable[[], datetime] = utc_now,
         source: str = "searxng",
         max_candidates: int = 10,
         max_queries: int = 2,
+        source_registry: SourceRegistry = DEFAULT_SOURCE_REGISTRY,
     ) -> None:
         if max_candidates < 1:
             raise ValueError("max_candidates must be >= 1")
@@ -174,12 +184,13 @@ class DiscoveryAgent:
             raise ValueError("max_queries must be >= 1")
         if not source:
             raise ValueError("source must not be empty")
-        self._searxng = searxng
+        self._search = searxng
         self._firecrawl = firecrawl
         self._clock = clock
         self._source = source
         self._max_candidates = max_candidates
         self._max_queries = max_queries
+        self._source_registry = source_registry
 
     @property
     def source(self) -> str:
@@ -204,7 +215,7 @@ class DiscoveryAgent:
         """Execute discovery and return the JSON-ready structured result.
 
         The bounded query set is run in order. A failure of the primary query
-        raises :class:`SearXNGError` when the operation genuinely cannot
+        raises :class:`SearchError` when the operation genuinely cannot
         proceed, letting the runtime apply its retry policy; a failure of an
         additional query is recorded in ``errors`` and the run continues with
         the results already gathered. Candidate-level failures (crawl errors,
@@ -214,13 +225,17 @@ class DiscoveryAgent:
         errors: list[str] = []
         issues: list[DiscoveryIssue] = []
         counters = _Counters()
-        queries = build_search_queries(request, max_queries=self._max_queries)
+        queries = build_search_queries(
+            request,
+            max_queries=self._max_queries,
+            source_registry=self._source_registry,
+        )
 
         results: list[SearchResult] = []
         for index, query in enumerate(queries):
             try:
-                results.extend(self._searxng.search(query))
-            except SearXNGError:
+                results.extend(self._search.search(query))
+            except SearchError:
                 logger.warning(
                     "discovery search failed for query %r", query, exc_info=True
                 )
@@ -232,36 +247,17 @@ class DiscoveryAgent:
         candidates = self._collect_candidates(results, errors, issues, counters)
 
         plans: list[_Plan] = []
+        failed_candidates: list[_Candidate] = []
         jobs_skipped = 0
         for candidate in candidates:
             url = candidate.result.url
-            if candidate.rejection is not None:
-                errors.append(candidate.rejection)
-                counters.invalid_results += 1
-                _record_issue(
-                    issues,
-                    url,
-                    "validate",
-                    DiscoveryIssueCategory.invalid_url,
-                    message=candidate.rejection,
-                )
-                continue
-            if candidate.quality is UrlQuality.listing:
-                counters.listings_skipped += 1
-                _record_issue(
-                    issues,
-                    url,
-                    "classify",
-                    DiscoveryIssueCategory.listing_page,
-                    message="URL has no identifiable individual vacancy",
-                )
-                continue
-
             counters.scrape_attempts += 1
             outcome = self._crawl(candidate)
             if outcome.error is not None:
                 errors.append(outcome.error)
                 counters.scrape_failures += 1
+                jobs_skipped += 1
+                failed_candidates.append(candidate)
                 _record_issue(
                     issues,
                     url,
@@ -270,16 +266,50 @@ class DiscoveryAgent:
                     status=outcome.status_code,
                     message=outcome.error,
                 )
-            elif outcome.scraped:
-                counters.extractions_succeeded += 1
+                continue
 
-            extracted = extract_job(candidate.result, outcome.crawl)
+            evidence = extract_page_evidence(outcome.crawl)
+            validation = validate_page_evidence(outcome.crawl, evidence)
+            if not validation.accepted:
+                counters.page_validation_failures += 1
+                failed_candidates.append(candidate)
+                if validation.failure is PageEvidenceFailure.listing:
+                    counters.listings_skipped += 1
+                    category = DiscoveryIssueCategory.listing_page
+                    message = "page is a listing, not an individual vacancy"
+                elif validation.failure is PageEvidenceFailure.empty:
+                    jobs_skipped += 1
+                    category = DiscoveryIssueCategory.empty_extraction
+                    message = "page did not provide usable vacancy evidence"
+                elif validation.failure in {
+                    PageEvidenceFailure.challenge,
+                    PageEvidenceFailure.error,
+                }:
+                    jobs_skipped += 1
+                    category = DiscoveryIssueCategory.validation_rejected
+                    message = "page could not be validated as an individual vacancy"
+                else:
+                    jobs_skipped += 1
+                    category = DiscoveryIssueCategory.validation_rejected
+                    message = "page did not provide sufficient vacancy evidence"
+                _record_issue(
+                    issues,
+                    url,
+                    "validate_page",
+                    category,
+                    status=None,
+                    message=message,
+                )
+                continue
+
+            counters.extractions_succeeded += 1
+            assert validation.extracted is not None
+            extracted = validation.extracted
             decision = filter_check(request, extracted)
             if not decision.accepted:
                 logger.info(
-                    "discovery skipped %s: %s",
-                    candidate.canonical_url,
-                    decision.reason,
+                    "discovery skipped candidate at %s",
+                    sanitize_public_url(candidate.canonical_url),
                 )
                 jobs_skipped += 1
                 _record_issue(
@@ -287,26 +317,15 @@ class DiscoveryAgent:
                     url,
                     "filter",
                     DiscoveryIssueCategory.validation_rejected,
-                    message=decision.reason,
-                )
-                continue
-
-            if resolve_quality(
-                candidate.quality, classify_page(outcome.crawl)
-            ) is UrlQuality.listing:
-                counters.listings_skipped += 1
-                _record_issue(
-                    issues,
-                    url,
-                    "classify",
-                    DiscoveryIssueCategory.listing_page,
-                    message="page is a listing, not an individual vacancy",
+                    message="candidate did not meet the requested filters",
                 )
                 continue
 
             plans.append(_Plan(candidate, extracted, outcome))
 
-        created, updated, job_ids = self._persist(session, plans)
+        created, updated, job_ids = self._persist(
+            session, plans, failed_candidates=failed_candidates
+        )
 
         result = DiscoveryResult(
             query={
@@ -325,6 +344,7 @@ class DiscoveryAgent:
             duplicates_skipped=counters.duplicates_skipped,
             scrape_attempts=counters.scrape_attempts,
             extractions_succeeded=counters.extractions_succeeded,
+            page_validation_failures=counters.page_validation_failures,
             listings_skipped=counters.listings_skipped,
             invalid_results=counters.invalid_results,
             malformed_results=counters.malformed_results,
@@ -342,17 +362,62 @@ class DiscoveryAgent:
     ) -> list[_Candidate]:
         """Validate and dedupe search results by canonical URL, capped.
 
-        Malformed results (non-http URLs) are dropped outright and are not
-        candidates. Canonical duplicates are counted and dropped. The first
-        occurrence of a canonical URL wins; the remaining candidates carry
-        their URL quality and, when a URL cannot fit the database columns, a
-        rejection reason so they are counted as skipped, not silently lost.
+        Only reviewed direct-posting URLs within the persisted URL column
+        limits are canonicalized into crawl candidates or allowed to consume
+        the candidate cap. Unsupported sources, landing/listing pages, unknown
+        paths, malformed URLs, and overlong URLs are recorded and skipped
+        first. Canonical duplicates are counted and dropped; the first
+        eligible occurrence wins.
         """
         candidates: dict[str, _Candidate] = {}
+        seen_canonical: set[str] = set()
         for result in results:
-            parts = urlsplit(result.url)
-            if parts.scheme not in ("http", "https") or not parts.netloc:
-                errors.append(f"malformed search result URL skipped: {result.url!r}")
+            assessment = assess_source_url(result.url, self._source_registry)
+            if assessment.kind is SourceKind.INVALID_URL:
+                errors.append("malformed search result URL skipped")
+                counters.malformed_results += 1
+                _record_issue(
+                    issues,
+                    result.url,
+                    "eligibility",
+                    DiscoveryIssueCategory.invalid_url,
+                    message="malformed search result URL",
+                )
+                continue
+            if not assessment.eligible:
+                if assessment.kind in {
+                    SourceKind.CAREER_LANDING,
+                    SourceKind.LISTING,
+                }:
+                    category = DiscoveryIssueCategory.listing_page
+                    message = (
+                        "career landing page is not an individual vacancy"
+                        if assessment.kind is SourceKind.CAREER_LANDING
+                        else "listing URL is not an individual vacancy"
+                    )
+                else:
+                    category = DiscoveryIssueCategory.validation_rejected
+                    message = "source or URL pattern is not enabled"
+                _record_issue(
+                    issues,
+                    result.url,
+                    "eligibility",
+                    category,
+                    message=message,
+                )
+                continue
+
+            try:
+                parts = urlsplit(result.url)
+                valid_url = (
+                    parts.scheme.lower() in ("http", "https")
+                    and bool(parts.netloc)
+                    and bool(parts.hostname)
+                )
+            except ValueError:
+                valid_url = False
+            if not valid_url:
+                errors.append("malformed search result URL skipped")
                 counters.malformed_results += 1
                 _record_issue(
                     issues,
@@ -362,9 +427,12 @@ class DiscoveryAgent:
                     message="malformed search result URL",
                 )
                 continue
-            canonical = canonicalize_url(result.url)
+            try:
+                canonical = canonicalize_url(result.url)
+            except ValueError:
+                canonical = ""
             if not canonical:
-                errors.append(f"search result URL has no canonical form: {result.url!r}")
+                errors.append("search result URL has no canonical form")
                 counters.malformed_results += 1
                 _record_issue(
                     issues,
@@ -374,7 +442,30 @@ class DiscoveryAgent:
                     message="URL has no canonical form",
                 )
                 continue
-            if canonical in candidates:
+            rejection = None
+            if len(canonical) > MAX_CANONICAL_URL_LENGTH:
+                rejection = (
+                    f"canonical URL longer than {MAX_CANONICAL_URL_LENGTH} "
+                    "characters, not persisted"
+                )
+            elif len(result.url) > MAX_JOB_URL_LENGTH:
+                rejection = (
+                    f"job URL longer than {MAX_JOB_URL_LENGTH} characters, "
+                    "not persisted"
+                )
+            if rejection is not None:
+                errors.append(rejection)
+                counters.invalid_results += 1
+                _record_issue(
+                    issues,
+                    result.url,
+                    "validate",
+                    DiscoveryIssueCategory.invalid_url,
+                    message=rejection,
+                )
+                continue
+
+            if canonical in seen_canonical:
                 counters.duplicates_skipped += 1
                 _record_issue(
                     issues,
@@ -384,22 +475,11 @@ class DiscoveryAgent:
                     message="duplicate canonical URL in this result set",
                 )
                 continue
-            rejection = None
-            if len(canonical) > MAX_CANONICAL_URL_LENGTH:
-                rejection = (
-                    f"canonical URL longer than {MAX_CANONICAL_URL_LENGTH} "
-                    f"characters, not persisted: {canonical!r}"
-                )
-            elif len(result.url) > MAX_JOB_URL_LENGTH:
-                rejection = (
-                    f"job URL longer than {MAX_JOB_URL_LENGTH} characters, "
-                    f"not persisted: {result.url!r}"
-                )
+            seen_canonical.add(canonical)
+
             candidates[canonical] = _Candidate(
                 result=result,
                 canonical_url=canonical,
-                quality=classify_url(result.url),
-                rejection=rejection,
             )
             if len(candidates) >= self._max_candidates:
                 break
@@ -411,22 +491,57 @@ class DiscoveryAgent:
         try:
             crawl = self._firecrawl.scrape(url)
         except FirecrawlError as exc:
+            category = _crawl_failure_category(exc)
+            logger.warning(
+                "Firecrawl scrape failed %s",
+                json.dumps(
+                    {
+                        "stage": "crawl",
+                        "category": category.value,
+                        "error_kind": exc.kind or "unknown",
+                        "status_code": exc.status_code,
+                        "correlation_id": exc.correlation_id,
+                        "provider_request_id": exc.request_id,
+                        "provider_error_code": exc.provider_error_code,
+                        "provider_message": exc.provider_message,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+            if exc.status_code is not None:
+                public_detail = f"crawl failed with HTTP {exc.status_code}"
+            elif exc.kind == "timeout":
+                public_detail = "crawl request timed out"
+            elif exc.kind == "network_error":
+                public_detail = "crawl request failed due to a network error"
+            elif exc.kind == "api_error":
+                public_detail = "scrape failed"
+            elif exc.kind == "shape_error":
+                public_detail = "scrape response was invalid"
+            else:
+                public_detail = "crawl failed"
             return _CrawlOutcome(
                 None,
-                f"{url}: crawl failed: {exc}",
-                _crawl_failure_category(exc),
+                public_detail,
+                category,
                 exc.status_code,
-            )
-        if not has_usable_content(crawl):
-            return _CrawlOutcome(
-                crawl,
-                f"{url}: crawl returned no usable content",
-                DiscoveryIssueCategory.empty_extraction,
             )
         return _CrawlOutcome(crawl, None)
 
-    def _persist(self, session: Session, plans: list[_Plan]) -> tuple[int, int, list[str]]:
-        """Upsert every planned job; returns (created, updated, job_ids)."""
+    def _persist(
+        self,
+        session: Session,
+        plans: list[_Plan],
+        *,
+        failed_candidates: list[_Candidate] | None = None,
+    ) -> tuple[int, int, list[str]]:
+        """Upsert accepted vacancies and record failed attempts on existing rows.
+
+        Failed or unusable first-seen candidates are never inserted. A failed
+        recrawl updates only operational fields on an existing row, preserving
+        its trusted content, availability, and last successful crawl time.
+        """
         now = self._clock()
         created = 0
         updated = 0
@@ -456,6 +571,16 @@ class DiscoveryAgent:
                 created += 1
             else:
                 updated += 1
+        for candidate in failed_candidates or ():
+            session.execute(
+                update(Job)
+                .where(Job.canonical_url == candidate.canonical_url)
+                .values(
+                    crawl_status=CrawlStatus.failed,
+                    last_seen_at=now,
+                    updated_at=now,
+                )
+            )
         return created, updated, job_ids
 
     @staticmethod
@@ -505,17 +630,15 @@ class DiscoveryAgent:
         always records the latest attempt.
 
         Vacancy content (title, description, location, employment type,
-        experience, company, outbound URL, source, date posted) is only
-        reconciled when the crawl succeeded and produced usable content.
-        After a failed or unusable crawl the previously extracted values are
-        left untouched — a search-result snippet is never treated as fresher
-        evidence than a real page — while the operational columns
-        (``crawl_status``, ``last_seen_at``, ``updated_at``) still record the
-        attempt. A brand-new row is always inserted from the search-derived
-        fields, so a first-seen job with a failed crawl still persists.
+        experience, company, outbound URL, source, date posted) is reconciled
+        only for a page that passed vacancy-evidence validation. Failed and
+        unusable attempts are handled separately by ``_persist``: they never
+        insert a first-seen job and only update operational fields on an
+        existing row. Search-result snippets are never persisted as vacancy
+        content.
 
         Availability is only written when the crawl produced a credible
-        verdict: a successful individual-page crawl sets ``available`` (or
+        verdict: a successful validated vacancy crawl sets ``available`` (or
         ``closed`` plus ``closed_at`` on affirmative closure evidence),
         while a failed crawl passes ``None`` and leaves the previous
         availability and ``closed_at`` untouched.
@@ -596,26 +719,32 @@ class DiscoveryAgent:
 def register_discovery_handler(
     registry: HandlerRegistry,
     *,
-    searxng: SearXNGClient | None = None,
+    searxng: SearchClient | None = None,
     firecrawl: FirecrawlClient | None = None,
     clock: Callable[[], datetime] = utc_now,
     source: str = "searxng",
     max_candidates: int = 10,
     max_queries: int = 2,
+    source_registry: SourceRegistry = DEFAULT_SOURCE_REGISTRY,
     agent_name: str = DISCOVERY_AGENT_NAME,
 ) -> DiscoveryAgent:
     """Build a DiscoveryAgent and register its handler on ``registry``.
 
-    Clients not supplied are constructed from application settings — the
-    production path used by ``create_app()``. Tests inject deterministic
-    fake clients instead, so no test ever reaches a live service. Only the
-    given registry is mutated; callers wanting isolation build their own
-    registry rather than relying on process-wide registration state.
+    Missing clients are constructed from application settings. The selected
+    search provider is either SearXNG or Firecrawl Search; the scrape client
+    remains Firecrawl. Tests inject deterministic fake clients, so no test
+    reaches a live service. Only the given registry is mutated.
     """
     if searxng is None or firecrawl is None:
         settings = get_settings()
         if searxng is None:
-            searxng = SearXNGClient(settings.searxng_base_url)
+            if settings.search_provider == "firecrawl":
+                searxng = FirecrawlSearchClient(
+                    settings.firecrawl_base_url,
+                    api_key=settings.firecrawl_api_key,
+                )
+            else:
+                searxng = SearXNGClient(settings.searxng_base_url)
         if firecrawl is None:
             firecrawl = FirecrawlClient(
                 settings.firecrawl_base_url, api_key=settings.firecrawl_api_key
@@ -627,6 +756,7 @@ def register_discovery_handler(
         source=source,
         max_candidates=max_candidates,
         max_queries=max_queries,
+        source_registry=source_registry,
     )
     registry.register(agent_name, agent.handle)
     return agent

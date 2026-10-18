@@ -14,6 +14,7 @@ from app.agents.discovery.classify import (
     crawl_http_status,
     has_closure_evidence,
     resolve_quality,
+    sanitize_public_url,
     sanitize_url,
     url_host,
 )
@@ -162,9 +163,45 @@ class TestSanitizeUrl:
         cleaned = sanitize_url("https://EXAMPLE.com/jobs/42?utm_source=x#apply")
         assert cleaned == "https://example.com/jobs/42"
 
+    def test_credentials_and_sensitive_query_are_stripped(self) -> None:
+        cleaned = sanitize_url(
+            "https://user:password@EXAMPLE.com/jobs/42?access_token=private#apply"
+        )
+        assert cleaned == "https://example.com/jobs/42"
+        assert "password" not in cleaned
+        assert "private" not in cleaned
+
+    def test_token_shaped_path_segments_are_redacted_from_diagnostics(self) -> None:
+        token = "ABCDEF0123456789_ABCDEF0123456789_ABCDEF"
+        cleaned = sanitize_url(f"https://example.com/jobs/{token}/apply")
+        assert cleaned == "https://example.com/jobs/[redacted]/apply"
+        assert token not in cleaned
+
     def test_long_url_is_bounded(self) -> None:
         cleaned = sanitize_url("https://example.com/jobs/" + "a" * 1000)
         assert len(cleaned) <= 300
 
     def test_host_extraction(self) -> None:
         assert url_host("https://Jobs.Example.com:443/role/1") == "jobs.example.com"
+
+
+class TestSanitizePublicUrl:
+    def test_returns_only_origin_and_strips_url_secrets(self) -> None:
+        cleaned = sanitize_public_url(
+            "https://user:password@EXAMPLE.com:8443/reset/secret"
+            "?access_token=private#fragment"
+        )
+        assert cleaned == "https://example.com:8443"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://[broken/path",
+            "http://example.com:",
+            "http://bad host/path",
+            "ftp://example.com/jobs/42",
+            "not a URL",
+        ],
+    )
+    def test_malformed_or_unsupported_urls_are_rejected_safely(self, url: str) -> None:
+        assert sanitize_public_url(url) == "<invalid-url>"
