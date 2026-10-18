@@ -164,3 +164,35 @@ output, deterministic checks, and safe failure metadata: an error category,
 an optional validated HTTP status, and an optional allowlisted provider status.
 It omits prompts, API credentials, response bodies, and provider exception
 messages.
+
+## Compare existing artifacts offline
+
+The comparison utility reads two existing JSON artifacts and prints a
+human-readable report. Run it from `backend/`; it does not call Gemini or any
+other provider and does not write or modify artifacts:
+
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.compare_job_matching `
+  --baseline artifacts/job-matching-evaluations/job-matching-20261018T200508820833Z.json `
+  --comparison artifacts/job-matching-evaluations/job-matching-20261018T202032072759Z.json
+```
+
+Use `--help` to see the required `--baseline PATH` and `--comparison PATH`
+arguments. Cases are paired by exact case ID, not by their array positions.
+The report shows each artifact's prompt/model metadata, case execution status,
+structured verdict, score, confidence, available match signals, automatic
+check summaries and ranking-check states. A score delta is printed only when
+both successful outputs contain valid numeric scores for the same case.
+
+Cases only represented in one artifact are reported as such. Failed rows are
+provider/evaluation execution failures and do not count as a poor matching
+verdict; cases listed as missing by the artifact's deterministic evaluation
+are reported as unattempted. Ranking checks retain their recorded `passed`,
+`failed`, or `not_run` state, so an omitted pairwise comparison is never
+reported as passed. Raw provider messages, response bodies, free-text model
+rationales, and unrecognized model/version identifiers are not printed.
+
+The comparison is observational. Prompt or model differences are highlighted,
+but score changes do not establish causation or score calibration, and
+confidence values are not calibrated probabilities. This workflow is offline
+and consumes no Gemini quota.
