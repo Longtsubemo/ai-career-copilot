@@ -60,7 +60,9 @@ from app.agents.runtime.context import RunContext
 from app.agents.runtime.registry import HandlerRegistry
 from app.agents.runtime.runtime import utc_now
 from app.clients.firecrawl import CrawlResult, FirecrawlClient, FirecrawlError
-from app.clients.searxng import SearchResult, SearXNGClient, SearXNGError
+from app.clients.firecrawl_search import FirecrawlSearchClient
+from app.clients.search import SearchClient, SearchError, SearchResult
+from app.clients.searxng import SearXNGClient
 from app.core.config import get_settings
 from app.models.company import Company
 from app.models.enums import AvailabilityStatus, CrawlStatus
@@ -159,7 +161,7 @@ def _crawl_failure_category(exc: FirecrawlError) -> DiscoveryIssueCategory:
 class DiscoveryAgent:
     """Deterministic job discovery driven by injected tool clients.
 
-    The agent depends on abstractions only: a SearXNG client for search, a
+    The agent depends on abstractions only: a search client for candidates, a
     Firecrawl client for page content, a clock for timestamps. The database
     session arrives per call from the runtime's :class:`RunContext`, never
     from the constructor.
@@ -167,7 +169,7 @@ class DiscoveryAgent:
 
     def __init__(
         self,
-        searxng: SearXNGClient,
+        searxng: SearchClient,
         firecrawl: FirecrawlClient,
         *,
         clock: Callable[[], datetime] = utc_now,
@@ -182,7 +184,7 @@ class DiscoveryAgent:
             raise ValueError("max_queries must be >= 1")
         if not source:
             raise ValueError("source must not be empty")
-        self._searxng = searxng
+        self._search = searxng
         self._firecrawl = firecrawl
         self._clock = clock
         self._source = source
@@ -213,7 +215,7 @@ class DiscoveryAgent:
         """Execute discovery and return the JSON-ready structured result.
 
         The bounded query set is run in order. A failure of the primary query
-        raises :class:`SearXNGError` when the operation genuinely cannot
+        raises :class:`SearchError` when the operation genuinely cannot
         proceed, letting the runtime apply its retry policy; a failure of an
         additional query is recorded in ``errors`` and the run continues with
         the results already gathered. Candidate-level failures (crawl errors,
@@ -232,8 +234,8 @@ class DiscoveryAgent:
         results: list[SearchResult] = []
         for index, query in enumerate(queries):
             try:
-                results.extend(self._searxng.search(query))
-            except SearXNGError:
+                results.extend(self._search.search(query))
+            except SearchError:
                 logger.warning(
                     "discovery search failed for query %r", query, exc_info=True
                 )
@@ -717,7 +719,7 @@ class DiscoveryAgent:
 def register_discovery_handler(
     registry: HandlerRegistry,
     *,
-    searxng: SearXNGClient | None = None,
+    searxng: SearchClient | None = None,
     firecrawl: FirecrawlClient | None = None,
     clock: Callable[[], datetime] = utc_now,
     source: str = "searxng",
@@ -728,16 +730,21 @@ def register_discovery_handler(
 ) -> DiscoveryAgent:
     """Build a DiscoveryAgent and register its handler on ``registry``.
 
-    Clients not supplied are constructed from application settings — the
-    production path used by ``create_app()``. Tests inject deterministic
-    fake clients instead, so no test ever reaches a live service. Only the
-    given registry is mutated; callers wanting isolation build their own
-    registry rather than relying on process-wide registration state.
+    Missing clients are constructed from application settings. The selected
+    search provider is either SearXNG or Firecrawl Search; the scrape client
+    remains Firecrawl. Tests inject deterministic fake clients, so no test
+    reaches a live service. Only the given registry is mutated.
     """
     if searxng is None or firecrawl is None:
         settings = get_settings()
         if searxng is None:
-            searxng = SearXNGClient(settings.searxng_base_url)
+            if settings.search_provider == "firecrawl":
+                searxng = FirecrawlSearchClient(
+                    settings.firecrawl_base_url,
+                    api_key=settings.firecrawl_api_key,
+                )
+            else:
+                searxng = SearXNGClient(settings.searxng_base_url)
         if firecrawl is None:
             firecrawl = FirecrawlClient(
                 settings.firecrawl_base_url, api_key=settings.firecrawl_api_key

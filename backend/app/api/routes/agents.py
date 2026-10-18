@@ -11,6 +11,7 @@ reads back on success.
 
 from __future__ import annotations
 
+from hashlib import sha256
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,15 +44,23 @@ from app.agents.job_matching.prompt import PROMPT_VERSION as JOB_MATCHING_PROMPT
 from app.api.agent_runner import agent_run_response, run_agent_now
 from app.api.deps import (
     NO_MASTER_RESUME_DETAIL,
+    ensure_resume_ai_enabled,
     get_current_candidate,
+    get_current_user,
     get_registry,
 )
 from app.api.schemas import AgentRunOut, CoverLetterHttpRequest, MatchHttpRequest
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.candidate import Candidate
 from app.models.document import Document
 from app.models.job import Job
 from app.models.match import Match
+from app.models.user import User
+from app.services.discovery_quota import (
+    DailyProviderLimitExceeded,
+    reserve_provider_attempt,
+)
 from app.services import resume_upload
 
 router = APIRouter(tags=["agents"])
@@ -157,13 +166,33 @@ def discover_jobs(
     body: DiscoveryRequest,
     session: Session = Depends(get_db),
     registry=Depends(get_registry),
+    user: User = Depends(get_current_user),
 ) -> AgentRunOut:
-    """Run job discovery for one role/location/experience triple."""
+    """Run authenticated, quota-limited discovery for one search request."""
+    user_id = user.id
+    account_key = sha256(
+        f"{user_id}:{discovery_idempotency_key(body)}".encode("utf-8")
+    ).hexdigest()
+    settings = get_settings()
+    try:
+        reserve_provider_attempt(
+            session,
+            user_id=user_id,
+            user_limit=settings.discovery_daily_user_limit,
+            global_limit=settings.discovery_daily_global_limit,
+        )
+    except DailyProviderLimitExceeded:
+        raise HTTPException(
+            status_code=429, detail="daily discovery limit reached"
+        ) from None
+    # This commit makes the attempt durable before any search or scrape call,
+    # including calls that later fail.
+    session.commit()
     run = run_agent_now(
         session,
         registry=registry,
         agent_name=DISCOVERY_AGENT_NAME,
-        idempotency_key=discovery_idempotency_key(body),
+        idempotency_key=f"job_discovery:{account_key}",
         payload=body.model_dump(mode="json"),
     )
     return agent_run_response(run)
@@ -174,6 +203,7 @@ def analyze_job(
     job_id: UUID,
     session: Session = Depends(get_db),
     registry=Depends(get_registry),
+    _user: User = Depends(get_current_user),
 ) -> AgentRunOut:
     """Run job analysis for one job; repeat calls reuse the stored result."""
     _require_job(session, job_id)
@@ -200,6 +230,7 @@ def match_job(
     candidate: Candidate = Depends(get_current_candidate),
 ) -> AgentRunOut:
     """Run job matching for this job against the account's own resume."""
+    ensure_resume_ai_enabled()
     _require_job(session, job_id)
     candidate_id = _resolve_candidate_id(
         candidate, body.candidate_id if body else None
@@ -238,6 +269,7 @@ def generate_cover_letter(
     candidate: Candidate = Depends(get_current_candidate),
 ) -> AgentRunOut:
     """Generate a cover letter grounded in the account's own match and resume."""
+    ensure_resume_ai_enabled()
     _require_job(session, job_id)
     candidate_id = _resolve_candidate_id(
         candidate, body.candidate_id if body else None

@@ -2,8 +2,8 @@
 
 Reading is shared and unauthenticated; re-verification is a state-changing
 user action (it updates the shared job row after crawling its source URL), so
-it requires an authenticated session and is rate-limited by a per-job
-cooldown.
+it requires an authenticated session and is limited by a shared daily
+provider-operation quota plus a per-job cooldown.
 """
 
 from __future__ import annotations
@@ -23,6 +23,10 @@ from app.models.enums import AvailabilityStatus
 from app.models.job import Job
 from app.models.user import User
 from app.services import jobs as jobs_service
+from app.services.discovery_quota import (
+    DailyProviderLimitExceeded,
+    reserve_provider_attempt,
+)
 from app.services.freshness import resolve_availability
 from app.services.job_verification import verify_job_availability
 
@@ -114,12 +118,27 @@ def verify_job(
     ``check_failed`` outcome and preserves the previous availability and
     verification timestamp; nothing here ever auto-closes on a 404, timeout,
     5xx, access denial or empty page. Repeated checks within the configured
-    cooldown are a 429.
+    cooldown and exhausted daily quotas both produce a 429.
     """
     job = jobs_service.get_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} does not exist")
     settings = get_settings()
+    try:
+        reserve_provider_attempt(
+            session,
+            user_id=user.id,
+            user_limit=settings.discovery_daily_user_limit,
+            global_limit=settings.discovery_daily_global_limit,
+        )
+    except DailyProviderLimitExceeded:
+        raise HTTPException(
+            status_code=429, detail="daily provider limit reached"
+        ) from None
+    # Make the reservation durable before the verification service can call
+    # Firecrawl. Failed crawls and cooldown-rejected verification attempts
+    # remain counted as authenticated verification attempts.
+    session.commit()
     result = verify_job_availability(
         session,
         job,

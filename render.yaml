@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ai-career-copilot
+    runtime: docker
+    plan: free
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: "off"
+    healthCheckPath: /health
+    envVars:
+      - key: CAREER_COPILOT_ENVIRONMENT
+        value: production
+      - key: CAREER_COPILOT_DEBUG
+        value: "false"
+      - key: CAREER_COPILOT_SESSION_COOKIE_SECURE
+        value: "true"
+      - key: CAREER_COPILOT_SEARCH_PROVIDER
+        value: firecrawl
+      - key: CAREER_COPILOT_FIRECRAWL_BASE_URL
+        value: https://api.firecrawl.dev
+      - key: CAREER_COPILOT_DATABASE_URL
+        sync: false
+      - key: CAREER_COPILOT_FIRECRAWL_API_KEY
+        sync: false

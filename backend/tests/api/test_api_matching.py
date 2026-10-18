@@ -8,6 +8,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from app.agents.job_matching import MatchResult
+from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.match import Match
 from tests.api.support import (
@@ -67,6 +68,27 @@ def test_match_defaults_to_the_current_candidate_and_resume(client_factory, sess
     assert row.job_id == world.job.id
     assert row.candidate_id == world.candidate.id
     assert row.resume_document_id == world.resume.id
+
+
+def test_matching_is_disabled_without_gemini_or_run(
+    client_factory, session, monkeypatch
+):
+    world = _world(session)
+    gemini = FakeGeminiClient(MATCH)
+    client = _as_candidate(client_factory, world, gemini)
+    before_matches = session.scalar(select(func.count()).select_from(Match))
+    monkeypatch.setattr(
+        "app.api.deps.get_settings",
+        lambda: Settings(_env_file=None, enable_resume_ai=False),
+    )
+
+    response = client.post(f"/api/jobs/{world.job.id}/match")
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "resume AI features are disabled"}
+    assert gemini.calls == []
+    assert session.scalar(select(func.count()).select_from(AgentRun)) == 0
+    assert session.scalar(select(func.count()).select_from(Match)) == before_matches
 
 
 def test_match_accepts_an_explicitly_empty_body(client_factory, session):

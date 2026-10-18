@@ -3,14 +3,12 @@ import axios, { type AxiosError } from "axios";
 import { fromAxiosError } from "./errors";
 import { CSRF_COOKIE_NAME, csrfHeader } from "./session";
 
-const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
-
 export const UNAUTHORIZED_EVENT = "auth:unauthorized";
 
 function resolveBaseUrl(): string {
   const configured = import.meta.env?.VITE_API_BASE_URL;
   if (!configured) {
-    return DEFAULT_BASE_URL;
+    return "";
   }
   return configured.trim().replace(/\/+$/, "");
 }

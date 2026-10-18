@@ -72,6 +72,7 @@ const MESSAGE_RULES: Array<[RegExp, string]> = [
     "That candidate profile no longer exists.",
   ],
   [/SearXNGError/i, "The job search service is unavailable. Check that SearXNG is running, then try again."],
+  [/FirecrawlSearchError/i, "The hosted job search service is unavailable. Try again later."],
   [/FirecrawlError/i, "The page scraping service is unavailable. Check that Firecrawl is running, then try again."],
   [/GeminiError/i, "The AI analysis service is unavailable. Check the backend Gemini configuration, then try again."],
 ];

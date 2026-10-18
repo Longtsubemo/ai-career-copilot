@@ -9,14 +9,16 @@ from sqlalchemy import func, select
 from app.clients.gemini import GeminiError
 from app.models.agent_run import AgentRun
 from app.models.job_analysis import JobAnalysis
-from tests.api.support import ANALYSIS_PAYLOAD, ANALYSIS_RESULT, build_job
+from tests.api.support import ANALYSIS_PAYLOAD, ANALYSIS_RESULT, build_job, login
 from tests.fake_clients import FakeGeminiClient
+from tests.factories import make_user
 
 
 def test_analyze_runs_and_persists(client_factory, session):
     world = build_job(session)
     gemini = FakeGeminiClient(ANALYSIS_RESULT)
     client = client_factory(gemini=gemini)
+    login(client, make_user(session))
 
     response = client.post(f"/api/jobs/{world.job.id}/analyze")
 
@@ -45,6 +47,7 @@ def test_repeated_analyze_reuses_run_and_analysis(client_factory, session):
     world = build_job(session)
     gemini = FakeGeminiClient(ANALYSIS_RESULT)
     client = client_factory(gemini=gemini)
+    login(client, make_user(session))
 
     first = client.post(f"/api/jobs/{world.job.id}/analyze").json()
     second = client.post(f"/api/jobs/{world.job.id}/analyze").json()
@@ -60,6 +63,7 @@ def test_repeated_analyze_reuses_run_and_analysis(client_factory, session):
 def test_unknown_job_is_404_without_creating_a_run(client_factory, session):
     gemini = FakeGeminiClient(ANALYSIS_RESULT)
     client = client_factory(gemini=gemini)
+    login(client, make_user(session))
 
     response = client.post(f"/api/jobs/{uuid4()}/analyze")
 
@@ -73,6 +77,7 @@ def test_job_without_usable_content_is_409(client_factory, session):
     world = build_job(session, description=None)
     gemini = FakeGeminiClient(ANALYSIS_RESULT)
     client = client_factory(gemini=gemini)
+    login(client, make_user(session))
 
     response = client.post(f"/api/jobs/{world.job.id}/analyze")
 
@@ -89,6 +94,7 @@ def test_gemini_failure_is_503(client_factory, session):
     world = build_job(session)
     gemini = FakeGeminiClient(GeminiError("gemini is unavailable"))
     client = client_factory(gemini=gemini)
+    login(client, make_user(session))
 
     response = client.post(f"/api/jobs/{world.job.id}/analyze")
 
@@ -98,3 +104,16 @@ def test_gemini_failure_is_503(client_factory, session):
     assert detail["run"]["agent_name"] == "job_analysis"
     assert detail["run"]["status"] == "pending"
     assert session.scalar(select(func.count()).select_from(JobAnalysis)) == 0
+
+
+def test_analyze_requires_authentication_before_gemini_or_run(client_factory, session):
+    world = build_job(session)
+    gemini = FakeGeminiClient(ANALYSIS_RESULT)
+    client = client_factory(gemini=gemini)
+
+    response = client.post(f"/api/jobs/{world.job.id}/analyze")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "authentication required"}
+    assert session.scalar(select(func.count()).select_from(AgentRun)) == 0
+    assert gemini.calls == []

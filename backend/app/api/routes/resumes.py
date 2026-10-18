@@ -5,7 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import NO_MASTER_RESUME_DETAIL, get_current_candidate
+from app.api.deps import (
+    NO_MASTER_RESUME_DETAIL,
+    ensure_resume_ai_enabled,
+    get_current_candidate,
+)
 from app.api.schemas import ResumeHistoryOut, ResumeOut, ResumeUploadOut
 from app.db.session import get_db
 from app.models.candidate import Candidate
@@ -27,6 +31,7 @@ async def upload_master_resume(
     oversized upload is rejected by the service without buffering the
     whole file in memory.
     """
+    ensure_resume_ai_enabled()
     content = await file.read(resume_upload.MAX_RESUME_BYTES + 1)
     result = resume_upload.upload_master_resume(
         session,

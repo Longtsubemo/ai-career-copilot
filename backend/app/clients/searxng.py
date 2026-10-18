@@ -9,26 +9,17 @@ it returns.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from urllib.parse import urlencode
 
 import httpx
 
+from app.clients.search import SearchError, SearchResult
+
 DEFAULT_TIMEOUT = 15.0
 
 
-class SearXNGError(RuntimeError):
+class SearXNGError(SearchError):
     """A search request failed at transport, API or response-shape level."""
-
-
-@dataclass(frozen=True)
-class SearchResult:
-    """One normalized search hit: ``url`` and ``title`` are always usable."""
-
-    url: str
-    title: str
-    content: str | None = None
-    engine: str | None = None
 
 
 def build_search_url(base_url: str, query: str, *, page: int = 1) -> str:
