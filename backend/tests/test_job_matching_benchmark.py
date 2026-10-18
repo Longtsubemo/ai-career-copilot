@@ -502,6 +502,12 @@ def test_cli_requires_explicit_provider_call_acknowledgement(capsys) -> None:
     assert exc.value.code == 2
     assert "--confirm-provider-calls" in capsys.readouterr().err
 
+    with pytest.raises(SystemExit) as selected_exc:
+        main(["--case-id", "strong-retrieval-engineer"])
+
+    assert selected_exc.value.code == 2
+    assert "--confirm-provider-calls" in capsys.readouterr().err
+
 
 def test_cli_help_describes_the_configured_case_set(capsys) -> None:
     from evaluation.run_job_matching import main
@@ -509,10 +515,191 @@ def test_cli_help_describes_the_configured_case_set(capsys) -> None:
     with pytest.raises(SystemExit) as exc:
         main(["--help"])
 
-    help_text = capsys.readouterr().out
+    help_text = " ".join(capsys.readouterr().out.split())
     assert exc.value.code == 0
-    assert "all configured synthetic job-matching cases" in help_text
+    assert "Repeat --case-id" in help_text
+    assert "Without this option, all configured cases run" in help_text
     assert "six-case" not in help_text
+
+
+@pytest.mark.parametrize(
+    "selected_ids",
+    [
+        ["missing-essential-ml"],
+        ["unrelated-accounting", "strong-retrieval-engineer"],
+    ],
+)
+def test_runner_executes_only_requested_cases_in_requested_order(
+    monkeypatch, tmp_path, selected_ids
+) -> None:
+    from types import SimpleNamespace
+
+    import evaluation.run_job_matching as runner
+
+    class OfflineClient:
+        def __init__(self, *_args, **_kwargs):
+            self.calls = 0
+
+        def generate_structured(self, **_kwargs):
+            self.calls += 1
+            return valid_result()
+
+    client = OfflineClient()
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: SimpleNamespace(
+            gemini_api_key="synthetic-test-key", gemini_model="synthetic-model"
+        ),
+    )
+    monkeypatch.setattr(runner, "GeminiClient", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(runner, "DEFAULT_OUTPUT_DIR", tmp_path)
+
+    argv = ["--confirm-provider-calls"]
+    for case_id in selected_ids:
+        argv.extend(["--case-id", case_id])
+
+    assert runner.main(argv) in {0, 1}
+    artifact = json.loads(
+        next(tmp_path.glob("job-matching-*.json")).read_text(encoding="utf-8")
+    )
+    assert client.calls == len(selected_ids)
+    assert [row["case_id"] for row in artifact["results"]] == selected_ids
+    assert artifact["deterministic_evaluation"]["complete"] is True
+
+
+def test_runner_defaults_to_all_configured_cases(monkeypatch, tmp_path) -> None:
+    from types import SimpleNamespace
+
+    import evaluation.run_job_matching as runner
+
+    class OfflineClient:
+        calls = 0
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def generate_structured(self, **_kwargs):
+            self.calls += 1
+            return valid_result()
+
+    client = OfflineClient()
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: SimpleNamespace(
+            gemini_api_key="synthetic-test-key", gemini_model="synthetic-model"
+        ),
+    )
+    monkeypatch.setattr(runner, "GeminiClient", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(runner, "DEFAULT_OUTPUT_DIR", tmp_path)
+
+    assert runner.main(["--confirm-provider-calls"]) in {0, 1}
+    artifact = json.loads(
+        next(tmp_path.glob("job-matching-*.json")).read_text(encoding="utf-8")
+    )
+    expected_ids = [case.id for case in load_cases()]
+    assert client.calls == len(expected_ids) == 9
+    assert [row["case_id"] for row in artifact["results"]] == expected_ids
+
+
+@pytest.mark.parametrize(
+    ("requested_ids", "message"),
+    [
+        (["unknown-case-secret-marker"], "not configured benchmark cases"),
+        (["strong-retrieval-engineer", "strong-retrieval-engineer"], "Duplicate"),
+    ],
+)
+def test_invalid_case_selection_stops_before_setup_or_provider_calls(
+    monkeypatch, tmp_path, capsys, requested_ids, message
+) -> None:
+    import evaluation.run_job_matching as runner
+
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: pytest.fail("settings must not be read for invalid case selection"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "GeminiClient",
+        lambda *_args, **_kwargs: pytest.fail("client must not be created"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_reserve_result_file",
+        lambda *_args: pytest.fail("artifact must not be reserved"),
+    )
+
+    argv = ["--confirm-provider-calls"]
+    for case_id in requested_ids:
+        argv.extend(["--case-id", case_id])
+    with pytest.raises(SystemExit) as exc:
+        runner.main(argv)
+
+    error = capsys.readouterr().err
+    assert exc.value.code == 2
+    assert message in error
+    assert "unknown-case-secret-marker" not in error
+    assert not list(tmp_path.iterdir())
+
+
+def test_runner_stops_after_first_selected_case_failure_without_retry(
+    monkeypatch, tmp_path
+) -> None:
+    from types import SimpleNamespace
+
+    import evaluation.run_job_matching as runner
+    from app.clients.gemini import GeminiError
+
+    class FailOnSecondCallClient:
+        calls = 0
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def generate_structured(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                raise GeminiError(
+                    error_category="provider_api_error",
+                    http_status=503,
+                    provider_status="UNAVAILABLE",
+                )
+            return valid_result()
+
+    client = FailOnSecondCallClient()
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: SimpleNamespace(
+            gemini_api_key="synthetic-test-key", gemini_model="synthetic-model"
+        ),
+    )
+    monkeypatch.setattr(runner, "GeminiClient", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(runner, "DEFAULT_OUTPUT_DIR", tmp_path)
+
+    assert runner.main(
+        [
+            "--confirm-provider-calls",
+            "--case-id",
+            "strong-retrieval-engineer",
+            "--case-id",
+            "partial-data-platform",
+            "--case-id",
+            "missing-essential-ml",
+        ]
+    ) == 1
+    artifact = json.loads(
+        next(tmp_path.glob("job-matching-*.json")).read_text(encoding="utf-8")
+    )
+    assert client.calls == 2
+    assert [row["case_id"] for row in artifact["results"]] == [
+        "strong-retrieval-engineer",
+        "partial-data-platform",
+    ]
+    assert artifact["status"] == "failed"
+    assert artifact["failure"]["http_status"] == 503
 
 
 def test_runner_reports_missing_key_without_creating_client(monkeypatch, capsys) -> None:

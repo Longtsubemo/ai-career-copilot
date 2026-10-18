@@ -113,6 +113,39 @@ per request; the runner stops on the first failure and does not retry. Model
 calls may incur provider charges or consume quota. Do not use real resumes or
 other personal data with this benchmark.
 
+### Select specific cases
+
+To reduce the number of requests, repeat `--case-id` with exact configured case
+IDs. The selected cases run in the order supplied. For example, this command
+requests only the retrieval, missing-essential-skills, and unrelated-role
+cases:
+
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.run_job_matching `
+  --confirm-provider-calls `
+  --case-id strong-retrieval-engineer `
+  --case-id missing-essential-ml `
+  --case-id unrelated-accounting
+```
+
+For one case, pass only one `--case-id`:
+
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.run_job_matching `
+  --confirm-provider-calls `
+  --case-id strong-retrieval-engineer
+```
+
+Unknown IDs and duplicate IDs are rejected before Gemini configuration is read,
+an artifact is reserved, or a provider request is made. Without `--case-id`,
+the runner keeps the default behavior and runs all nine configured cases. A
+selected run makes at most one request per selected case and stops after the
+first failure; selection reduces the maximum request count, but does not
+guarantee provider quota or successful completion.
+Pairwise score-ordering checks that need an unselected case remain `not_run`,
+so a subset can be complete for its selected cases without passing the full
+cross-case rubric.
+
 The failed local run recorded `gemini-3.5-flash`, while the project default
 and `backend/.env.example` specify `gemini-3.8-flash`. As checked on
 2026-10-19, Google marks Gemini 3.5 Flash as deprecated and says requests to

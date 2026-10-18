@@ -1,8 +1,9 @@
 """Explicitly run the synthetic Gemini job-matching evaluation.
 
 Run from ``backend/`` with ``python -m evaluation.run_job_matching
---confirm-provider-calls``. This makes one Gemini call per case and stops at
-the first provider or structured-output failure; there is no retry loop.
+--confirm-provider-calls``. This makes one Gemini call per selected case and
+stops at the first provider or structured-output failure; there is no retry
+loop.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from app.clients.gemini import GeminiClient, GeminiError
 from app.core.config import get_settings
 
 from evaluation.job_matching import (
+    MatchBenchmarkCase,
     build_case_prompt,
     evaluate_benchmark,
     load_cases,
@@ -58,23 +60,64 @@ def _write_reserved_result(target: Path, payload: dict[str, Any]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run all configured synthetic job-matching cases through the configured Gemini model."
+        description=(
+            "Run configured synthetic job-matching cases through the configured "
+            "Gemini model. Repeat --case-id to select an exact subset."
+        )
     )
     parser.add_argument(
         "--confirm-provider-calls",
         action="store_true",
-        help="Required acknowledgement: this command sends one Gemini request per case.",
+        help=(
+            "Required acknowledgement: this command sends one Gemini request "
+            "per selected case, or per configured case by default."
+        ),
+    )
+    parser.add_argument(
+        "--case-id",
+        action="append",
+        dest="case_ids",
+        metavar="ID",
+        help=(
+            "Select an exact benchmark case (repeatable); supplied order is "
+            "preserved. Without this option, all configured cases run."
+        ),
     )
     return parser
 
 
+def _select_cases(
+    cases: list[MatchBenchmarkCase], requested_ids: list[str] | None
+) -> list[MatchBenchmarkCase]:
+    """Return all cases or the exact requested cases in the supplied order."""
+    if requested_ids is None:
+        return cases
+
+    if len(requested_ids) != len(set(requested_ids)):
+        raise ValueError("Duplicate --case-id values are not allowed.")
+
+    cases_by_id = {case.id: case for case in cases}
+    if any(case_id not in cases_by_id for case_id in requested_ids):
+        raise ValueError(
+            "One or more --case-id values are not configured benchmark cases."
+        )
+
+    return [cases_by_id[case_id] for case_id in requested_ids]
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
     if not args.confirm_provider_calls:
-        _parser().error(
+        parser.error(
             "provider calls are disabled by default; pass --confirm-provider-calls "
             "to run the synthetic evaluation"
         )
+
+    try:
+        cases = _select_cases(load_cases(), args.case_ids)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     try:
         settings = get_settings()
@@ -93,7 +136,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    cases = load_cases()
     client = GeminiClient(settings.gemini_model, api_key=settings.gemini_api_key)
     run_started = datetime.now(timezone.utc)
     try:
