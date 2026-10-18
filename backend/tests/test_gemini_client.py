@@ -6,7 +6,12 @@ is ever constructed, no credential is read, no socket is opened.
 
 from __future__ import annotations
 
+import json
+import traceback
+
+import httpx
 import pytest
+from google.genai.errors import APIError
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.clients.gemini import DEFAULT_MODEL, GeminiClient, GeminiError
@@ -119,7 +124,7 @@ def test_empty_response_raises_a_structured_error() -> None:
     api = RecordingGeminiApi(parsed=None, text=None)
     client = make_client(api)
 
-    with pytest.raises(GeminiError, match="no usable structured content"):
+    with pytest.raises(GeminiError, match="unusable structured output"):
         client.generate_structured(prompt="go", schema=TinySpec)
 
 
@@ -127,45 +132,107 @@ def test_whitespace_response_raises_a_structured_error() -> None:
     api = RecordingGeminiApi(parsed=None, text="   ")
     client = make_client(api)
 
-    with pytest.raises(GeminiError, match="no usable structured content"):
+    with pytest.raises(GeminiError, match="unusable structured output"):
         client.generate_structured(prompt="go", schema=TinySpec)
 
 
-def test_non_json_response_raises() -> None:
-    api = RecordingGeminiApi(parsed=None, text="<html>oops</html>")
+def test_non_json_response_raises_without_echoing_response_text() -> None:
+    secret = "provider-html-secret"
+    api = RecordingGeminiApi(parsed=None, text=f"<html>{secret}</html>")
     client = make_client(api)
 
-    with pytest.raises(GeminiError, match="not valid JSON"):
+    with pytest.raises(GeminiError, match="unusable structured output") as info:
         client.generate_structured(prompt="go", schema=TinySpec)
 
+    assert info.value.error_category == "structured_output_error"
+    assert secret not in "".join(traceback.format_exception(info.value))
 
-def test_json_that_violates_the_schema_raises() -> None:
-    api = RecordingGeminiApi(parsed=None, text='{"score": 1}')
+
+def test_json_that_violates_the_schema_raises_without_echoing_response() -> None:
+    sentinel = "provider-response-secret"
+    api = RecordingGeminiApi(
+        parsed=None,
+        text=json.dumps({"name": 123, "score": sentinel}),
+    )
     client = make_client(api)
 
-    with pytest.raises(GeminiError, match="does not match the expected schema"):
+    with pytest.raises(GeminiError) as info:
         client.generate_structured(prompt="go", schema=TinySpec)
 
+    error = info.value
+    rendered = "".join(traceback.format_exception(error))
+    assert error.error_category == "structured_output_error"
+    assert error.http_status is None
+    assert error.provider_status is None
+    assert sentinel not in rendered
+    assert error.__cause__ is not None
+    assert error.__context__ is None
 
-def test_api_failure_is_wrapped_with_its_cause() -> None:
-    api = RecordingGeminiApi(error=RuntimeError("connection reset"))
+
+def test_api_error_keeps_only_validated_provider_metadata() -> None:
+    sentinels = (
+        "sensitive-provider-message",
+        "response-body-secret",
+        "api-key-secret",
+    )
+    api_error = APIError(
+        429,
+        {
+            "error": {
+                "status": "RESOURCE_EXHAUSTED",
+                "message": sentinels[0],
+                "debug": sentinels[1],
+                "key": sentinels[2],
+            }
+        },
+    )
+    api = RecordingGeminiApi(error=api_error)
     client = make_client(api)
 
-    with pytest.raises(GeminiError, match="connection reset") as info:
+    with pytest.raises(GeminiError) as info:
         client.generate_structured(prompt="go", schema=TinySpec)
 
-    assert isinstance(info.value.__cause__, RuntimeError)
+    error = info.value
+    rendered = "".join(traceback.format_exception(error))
+    assert error.error_category == "provider_api_error"
+    assert error.http_status == 429
+    assert error.provider_status == "RESOURCE_EXHAUSTED"
+    assert isinstance(error.__cause__, RuntimeError)
+    assert error.__context__ is None
+    assert all(secret not in rendered for secret in sentinels)
 
 
-def test_gemini_errors_pass_through_unwrapped() -> None:
-    original = GeminiError("quota exceeded")
+def test_unallowlisted_provider_status_and_invalid_http_code_are_dropped() -> None:
+    original = APIError(
+        700,
+        {
+            "status": "RESOURCE_EXHAUSTED_PROVIDER_KEY",
+            "message": "private provider detail",
+        },
+    )
     api = RecordingGeminiApi(error=original)
     client = make_client(api)
 
     with pytest.raises(GeminiError) as info:
         client.generate_structured(prompt="go", schema=TinySpec)
 
-    assert info.value is original
+    assert info.value.error_category == "provider_api_error"
+    assert info.value.http_status is None
+    assert info.value.provider_status is None
+    assert "private provider detail" not in str(info.value)
+
+
+def test_existing_gemini_error_is_normalized_without_leaking_its_message() -> None:
+    original = GeminiError("private provider detail")
+    api = RecordingGeminiApi(error=original)
+    client = make_client(api)
+
+    with pytest.raises(GeminiError) as info:
+        client.generate_structured(prompt="go", schema=TinySpec)
+
+    assert info.value is not original
+    assert info.value.error_category == "unknown_error"
+    assert "private provider detail" not in str(info.value)
 
 
 def test_empty_prompt_is_rejected_before_any_request() -> None:
@@ -323,21 +390,54 @@ def test_the_real_sdk_client_wires_the_configured_http_options() -> None:
             client._sdk_client.close()
 
 
-def test_a_timeout_failure_is_wrapped_with_its_cause() -> None:
-    api = RecordingGeminiApi(error=TimeoutError("request timed out"))
+def test_a_timeout_failure_is_classified_and_chained_safely() -> None:
+    api = RecordingGeminiApi(error=TimeoutError("timeout message secret"))
     client = make_client(api)
 
-    with pytest.raises(GeminiError, match="timed out") as info:
+    with pytest.raises(GeminiError) as info:
         client.generate_structured(prompt="go", schema=TinySpec)
 
-    assert isinstance(info.value.__cause__, TimeoutError)
+    assert info.value.error_category == "transport_error"
+    assert isinstance(info.value.__cause__, RuntimeError)
+    assert "timeout message secret" not in "".join(
+        traceback.format_exception(info.value)
+    )
+
+
+def test_httpx_transport_failure_is_classified_without_exception_text() -> None:
+    api = RecordingGeminiApi(error=httpx.ConnectError("transport secret"))
+    client = make_client(api)
+
+    with pytest.raises(GeminiError) as info:
+        client.generate_structured(prompt="go", schema=TinySpec)
+
+    assert info.value.error_category == "transport_error"
+    assert info.value.http_status is None
+    assert "transport secret" not in "".join(
+        traceback.format_exception(info.value)
+    )
+
+
+def test_unknown_exception_has_generic_diagnostics_and_safe_chain() -> None:
+    api = RecordingGeminiApi(error=RuntimeError("unknown sensitive detail"))
+    client = make_client(api)
+
+    with pytest.raises(GeminiError) as info:
+        client.generate_structured(prompt="go", schema=TinySpec)
+
+    assert info.value.error_category == "unknown_error"
+    assert info.value.http_status is None
+    assert info.value.provider_status is None
+    assert "unknown sensitive detail" not in "".join(
+        traceback.format_exception(info.value)
+    )
 
 
 def test_a_wrongly_typed_parsed_value_with_invalid_text_raises() -> None:
     api = RecordingGeminiApi(parsed={"name": "delta"}, text="oops")
     client = make_client(api)
 
-    with pytest.raises(GeminiError, match="not valid JSON"):
+    with pytest.raises(GeminiError, match="unusable structured output"):
         client.generate_structured(prompt="go", schema=TinySpec)
 
 
@@ -345,5 +445,5 @@ def test_a_wrongly_typed_parsed_value_with_schema_violating_text_raises() -> Non
     api = RecordingGeminiApi(parsed="not a model", text='{"score": "high"}')
     client = make_client(api)
 
-    with pytest.raises(GeminiError, match="does not match the expected schema"):
+    with pytest.raises(GeminiError, match="unusable structured output"):
         client.generate_structured(prompt="go", schema=TinySpec)

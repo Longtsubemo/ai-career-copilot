@@ -275,6 +275,75 @@ def test_runner_does_not_print_settings_exception_details(monkeypatch, capsys) -
     assert "private configuration value" not in error
 
 
+def test_runner_artifact_records_only_safe_gemini_error_metadata(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    from types import SimpleNamespace
+
+    from google.genai.errors import APIError
+
+    import evaluation.run_job_matching as runner
+    from app.clients.gemini import GeminiClient
+
+    api_key = "synthetic-api-key-secret"
+    provider_message = "synthetic-provider-message-secret"
+    response_body = "synthetic-response-body-secret"
+
+    class FailingApi:
+        calls = 0
+
+        def generate_content(self, **_kwargs):
+            self.calls += 1
+            raise APIError(
+                429,
+                {
+                    "error": {
+                        "status": "RESOURCE_EXHAUSTED",
+                        "message": provider_message,
+                        "debug": response_body,
+                        "credential": api_key,
+                    }
+                },
+            )
+
+    api = FailingApi()
+
+    def build_offline_client(model, *, api_key: str):
+        assert api_key == "synthetic-api-key-secret"
+        return GeminiClient(model, api=api)
+
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: SimpleNamespace(gemini_api_key=api_key, gemini_model="synthetic-model"),
+    )
+    monkeypatch.setattr(runner, "GeminiClient", build_offline_client)
+    monkeypatch.setattr(runner, "DEFAULT_OUTPUT_DIR", tmp_path)
+
+    assert runner.main(["--confirm-provider-calls"]) == 1
+    assert api.calls == 1
+
+    captured = capsys.readouterr()
+    artifact_path = next(tmp_path.glob("job-matching-*.json"))
+    artifact_text = artifact_path.read_text(encoding="utf-8")
+    artifact = json.loads(artifact_text)
+    failure = artifact["failure"]
+    row = artifact["results"][0]
+
+    assert artifact["status"] == "failed"
+    assert failure["case_id"] == "strong-retrieval-engineer"
+    assert failure["error_category"] == "provider_api_error"
+    assert failure["http_status"] == 429
+    assert failure["provider_status"] == "RESOURCE_EXHAUSTED"
+    assert row["error_category"] == failure["error_category"]
+    assert row["http_status"] == failure["http_status"]
+    assert row["provider_status"] == failure["provider_status"]
+    assert all(
+        secret not in artifact_text + captured.out + captured.err
+        for secret in (api_key, provider_message, response_body)
+    )
+
+
 def test_output_reservation_failure_stops_before_provider_generation(
     monkeypatch, capsys
 ) -> None:

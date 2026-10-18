@@ -15,16 +15,107 @@ run completely offline.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NoReturn
 
+import httpx
+from google.genai.errors import APIError
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 
 
+_ERROR_CATEGORIES = frozenset(
+    {
+        "provider_api_error",
+        "transport_error",
+        "structured_output_error",
+        "unknown_error",
+    }
+)
+_PROVIDER_STATUS_ALLOWLIST = frozenset(
+    {
+        "ABORTED",
+        "ALREADY_EXISTS",
+        "CANCELLED",
+        "DATA_LOSS",
+        "DEADLINE_EXCEEDED",
+        "FAILED_PRECONDITION",
+        "INTERNAL",
+        "INVALID_ARGUMENT",
+        "NOT_FOUND",
+        "OUT_OF_RANGE",
+        "PERMISSION_DENIED",
+        "RESOURCE_EXHAUSTED",
+        "UNAUTHENTICATED",
+        "UNAVAILABLE",
+        "UNIMPLEMENTED",
+        "UNKNOWN",
+    }
+)
+_SAFE_ERROR_MESSAGES = {
+    "provider_api_error": "Gemini provider API request failed.",
+    "transport_error": "Gemini transport request failed.",
+    "structured_output_error": "Gemini returned unusable structured output.",
+    "unknown_error": "Gemini request failed.",
+}
+
+
+def _safe_error_category(value: object) -> str:
+    if isinstance(value, str) and value in _ERROR_CATEGORIES:
+        return value
+    return "unknown_error"
+
+
+def _safe_http_status(value: object) -> int | None:
+    if type(value) is int and 100 <= value <= 599:
+        return value
+    return None
+
+
+def _safe_provider_status(value: object) -> str | None:
+    if isinstance(value, str) and value in _PROVIDER_STATUS_ALLOWLIST:
+        return value
+    return None
+
+
+class _SanitizedGeminiCause(RuntimeError):
+    """Safe exception-chain marker that cannot retain SDK response details."""
+
+    def __init__(self, error_category: str) -> None:
+        category = _safe_error_category(error_category)
+        super().__init__(f"Gemini failure category: {category}")
+
+
 class GeminiError(RuntimeError):
-    """A Gemini request failed at transport, API or structured-output level."""
+    """A Gemini failure with bounded, safe diagnostic metadata.
+
+    The optional positional message is accepted for source compatibility but
+    deliberately discarded: SDK exception strings can contain response
+    bodies, user content, or other provider details.
+    """
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        error_category: str = "unknown_error",
+        http_status: object = None,
+        provider_status: object = None,
+    ) -> None:
+        del message
+        self.error_category = _safe_error_category(error_category)
+        self.http_status = _safe_http_status(http_status)
+        self.provider_status = _safe_provider_status(provider_status)
+        super().__init__(_SAFE_ERROR_MESSAGES[self.error_category])
+
+    def diagnostic_fields(self) -> dict[str, str | int | None]:
+        """Return only validated metadata suitable for a local artifact."""
+        return {
+            "error_category": _safe_error_category(self.error_category),
+            "http_status": _safe_http_status(self.http_status),
+            "provider_status": _safe_provider_status(self.provider_status),
+        }
 
 
 class GeminiClient:
@@ -76,6 +167,7 @@ class GeminiClient:
         if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
             raise ValueError("schema must be a pydantic BaseModel subclass")
 
+        failure: GeminiError | None = None
         try:
             models = self._api if self._api is not None else self._sdk_models()
             config = types.GenerateContentConfig(
@@ -88,10 +180,14 @@ class GeminiClient:
                 contents=prompt,
                 config=config,
             )
-        except GeminiError:
-            raise
         except Exception as exc:
-            raise GeminiError(f"structured generation failed: {exc}") from exc
+            failure = _failure_from_exception(exc)
+
+        if failure is not None:
+            # Raise outside the except block so the original provider
+            # exception is not retained as __context__ or exposed in a
+            # traceback. Keep a sanitized cause for normal exception chaining.
+            raise failure from _SanitizedGeminiCause(failure.error_category)
 
         return _extract_structured(response, schema)
 
@@ -133,16 +229,46 @@ def _extract_structured(response: Any, schema: type[BaseModel]) -> BaseModel:
 
     text = getattr(response, "text", None)
     if not isinstance(text, str) or not text.strip():
-        raise GeminiError("Gemini returned no usable structured content")
+        _raise_structured_output_error()
 
+    invalid_json = False
     try:
         payload = json.loads(text)
-    except ValueError as exc:
-        raise GeminiError("Gemini response is not valid JSON") from exc
+    except ValueError:
+        invalid_json = True
+        payload = None
+    if invalid_json:
+        _raise_structured_output_error()
 
+    invalid_schema = False
     try:
-        return schema.model_validate(payload)
-    except ValidationError as exc:
-        raise GeminiError(
-            f"Gemini response does not match the expected schema: {exc}"
-        ) from exc
+        result = schema.model_validate(payload)
+    except ValidationError:
+        invalid_schema = True
+        result = None
+    if invalid_schema:
+        _raise_structured_output_error()
+    return result
+
+
+def _failure_from_exception(exc: Exception) -> GeminiError:
+    """Map SDK/transport exceptions to safe categories and allowlisted fields."""
+    if isinstance(exc, APIError):
+        return GeminiError(
+            error_category="provider_api_error",
+            http_status=getattr(exc, "code", None),
+            provider_status=getattr(exc, "status", None),
+        )
+    if isinstance(exc, GeminiError):
+        return GeminiError(**exc.diagnostic_fields())
+    if isinstance(
+        exc,
+        (httpx.TransportError, TimeoutError, ConnectionError, OSError),
+    ):
+        return GeminiError(error_category="transport_error")
+    return GeminiError(error_category="unknown_error")
+
+
+def _raise_structured_output_error() -> NoReturn:
+    error = GeminiError(error_category="structured_output_error")
+    raise error from _SanitizedGeminiCause(error.error_category)

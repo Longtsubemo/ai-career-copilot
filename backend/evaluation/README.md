@@ -58,11 +58,21 @@ per request; the runner stops on the first failure and does not retry. Model
 calls may incur provider charges or consume quota. Do not use real resumes or
 other personal data with this benchmark.
 
+The failed local run recorded `gemini-3.5-flash`, while the project default
+and `backend/.env.example` specify `gemini-3.8-flash`. As checked on
+2026-10-19, Google marks Gemini 3.5 Flash as deprecated and says requests to
+that identifier are automatically routed to Gemini 3.6 Flash. This
+configuration discrepancy does not establish the cause of the failed run; no
+model setting was changed. See
+[Google's Gemini 3.5 Flash migration note](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.5).
+
 Each run writes a new timestamped JSON file under
 `backend/artifacts/job-matching-evaluations/`. That directory is gitignored.
 The runner reserves the unique result file before the first provider call, so
 an unwritable output directory or timestamp collision stops the run before
 incurring request cost. Existing files are never overwritten. The artifact
 records UTC timestamps, model, prompt version, per-case prompt hash, structured
-output, deterministic checks, and a generic failure type if a call fails. It
-omits prompts, API credentials, and provider exception text.
+output, deterministic checks, and safe failure metadata: an error category,
+an optional validated HTTP status, and an optional allowlisted provider status.
+It omits prompts, API credentials, response bodies, and provider exception
+messages.

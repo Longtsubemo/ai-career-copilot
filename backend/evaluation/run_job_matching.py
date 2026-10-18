@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
 
     outputs: dict[str, MatchResult] = {}
     rows: list[dict[str, Any]] = []
-    failure: dict[str, str] | None = None
+    failure: dict[str, Any] | None = None
 
     for case in cases:
         prompt = build_case_prompt(case)
@@ -125,9 +125,14 @@ def main(argv: list[str] | None = None) -> int:
                 system_instruction=SYSTEM_INSTRUCTION,
             )
         except GeminiError as exc:
-            # GeminiError can contain provider response details. Retain only
-            # its type, never raw text, prompts, credentials or resume content.
-            failure = {"case_id": case.id, "error_type": type(exc).__name__}
+            # Retain only the client's validated diagnostic allowlist, never
+            # raw exception text, response bodies, prompts or credentials.
+            diagnostics = exc.diagnostic_fields()
+            failure = {
+                "case_id": case.id,
+                "error_type": type(exc).__name__,
+                **diagnostics,
+            }
             rows.append(
                 {
                     "case_id": case.id,
@@ -135,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                     "prompt_sha256": _prompt_hash(prompt),
                     "status": "failed",
                     "error_type": type(exc).__name__,
+                    **diagnostics,
                 }
             )
             break
