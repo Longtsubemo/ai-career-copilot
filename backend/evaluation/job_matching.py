@@ -24,8 +24,68 @@ EXPECTED_SCENARIOS = frozenset(
         "partial_match",
         "missing_essential_skills",
         "unrelated_role",
-        "unsupported_qualification",
+        "certification_not_mentioned",
+        "certification_confirmed_absent",
+        "preferred_skill_not_evidenced",
+        "relevant_experience_gap",
         "missing_evidence",
+    }
+)
+
+NOT_EVIDENCED_CUES = (
+    "not evidenced",
+    "not listed",
+    "not provided",
+    "not documented",
+    "not mentioned",
+    "does not mention",
+    "no evidence of",
+    "cannot verify",
+    "cannot be verified",
+    "not established",
+    "lacks evidence of",
+)
+CONFIRMED_ABSENCE_CUES = (
+    "explicitly states they do not hold",
+    "explicitly states they do not have",
+    "does not hold",
+    "does not have",
+    "does not possess",
+    "do not hold",
+    "do not have",
+    "do not possess",
+    "has no",
+    "never held",
+    "never obtained",
+)
+ABSENCE_ASSERTION_CUES = CONFIRMED_ABSENCE_CUES + ("lacks",)
+_POSITIVE_CLAIM_VERBS = frozenset(
+    {
+        "has",
+        "holds",
+        "possesses",
+        "earned",
+        "obtained",
+        "completed",
+        "certified",
+        "claims",
+        "reports",
+    }
+)
+_NEGATION_CUES = frozenset({"not", "never", "no", "without", "lacks", "missing"})
+_POSITIVE_BRIDGE_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "required",
+        "named",
+        "professional",
+        "experience",
+        "with",
+        "in",
+        "for",
+        "as",
     }
 )
 
@@ -61,9 +121,15 @@ class CaseExpectations(BaseModel):
     allowed_verdicts: list[MatchVerdict] = Field(default_factory=list)
     must_match_skills: list[str] = Field(default_factory=list)
     must_be_missing_required: list[str] = Field(default_factory=list)
+    must_be_missing_preferred: list[str] = Field(default_factory=list)
+    must_be_matched: list[SignalField] = Field(default_factory=list)
+    must_be_mismatched: list[SignalField] = Field(default_factory=list)
     must_be_unclear: list[SignalField] = Field(default_factory=list)
     must_not_claim_positive: list[str] = Field(default_factory=list)
     must_identify_gaps: list[str] = Field(default_factory=list)
+    must_describe_as_not_evidenced: list[str] = Field(default_factory=list)
+    must_describe_as_confirmed_absent: list[str] = Field(default_factory=list)
+    must_not_describe_as_confirmed_absent: list[str] = Field(default_factory=list)
     score_above: list[str] = Field(default_factory=list)
 
 
@@ -79,6 +145,79 @@ class MatchBenchmarkCase(BaseModel):
 
 def _normalize_phrase(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+
+def _has_nearby_cue(
+    text: str, phrase: str, cues: tuple[str, ...], *, window: int = 12
+) -> bool:
+    """Find an explicit lexical cue near a target phrase.
+
+    This is deliberately a local phrase check, not semantic interpretation.
+    Free-text cases still require human review for paraphrases and scope.
+    """
+    tokens = _normalize_phrase(text).split()
+    target = _normalize_phrase(phrase).split()
+    if not target:
+        return False
+    cue_tokens = [_normalize_phrase(cue).split() for cue in cues]
+    for start in range(len(tokens) - len(target) + 1):
+        if tokens[start : start + len(target)] != target:
+            continue
+        left = max(0, start - window)
+        right = min(len(tokens), start + len(target) + window)
+        nearby = tokens[left:right]
+        for cue in cue_tokens:
+            if not cue:
+                continue
+            for index in range(len(nearby) - len(cue) + 1):
+                if nearby[index : index + len(cue)] != cue:
+                    continue
+                following = nearby[index + len(cue) : index + len(cue) + 4]
+                if set(following) & {
+                    "evidence",
+                    "documentation",
+                    "proof",
+                    "mention",
+                    "support",
+                }:
+                    continue
+                return True
+    return False
+
+
+def _has_unnegated_positive_claim(text: str, phrase: str) -> bool:
+    """Catch common direct positive assertions in rationale text only.
+
+    The structured ``matched_skills`` and ``strengths`` fields are treated as
+    positive by contract. This helper adds a narrow check for common verb +
+    phrase constructions in rationale text; it is not a general entailment
+    or negation detector.
+    """
+    tokens = _normalize_phrase(text).split()
+    target = _normalize_phrase(phrase).split()
+    targets = [target]
+    if len(target) > 1 and target[-1] in {
+        "certification",
+        "certificate",
+        "credential",
+    }:
+        targets.append(target[:-1])
+    for target_variant in targets:
+        for start in range(len(tokens) - len(target_variant) + 1):
+            if tokens[start : start + len(target_variant)] != target_variant:
+                continue
+            verb_start = max(0, start - 5)
+            for index in range(verb_start, start):
+                if tokens[index] not in _POSITIVE_CLAIM_VERBS:
+                    continue
+                between = tokens[index + 1 : start]
+                before_verb = tokens[max(0, index - 6) : index]
+                if (
+                    set(between) <= _POSITIVE_BRIDGE_WORDS
+                    and not (_NEGATION_CUES & (set(between) | set(before_verb)))
+                ):
+                    return True
+    return False
 
 
 def load_cases(path: Path | None = None) -> list[MatchBenchmarkCase]:
@@ -145,11 +284,20 @@ def evaluate_case(
 
     matched = {_normalize_phrase(item) for item in result.matched_skills}
     missing = {_normalize_phrase(item) for item in result.missing_required_skills}
+    missing_preferred = {
+        _normalize_phrase(item) for item in result.missing_preferred_skills
+    }
     for skill in expected.must_match_skills:
         checks[f"matched_skill:{skill}"] = _normalize_phrase(skill) in matched
     for skill in expected.must_be_missing_required:
         checks[f"missing_required:{skill}"] = _normalize_phrase(skill) in missing
+    for skill in expected.must_be_missing_preferred:
+        checks[f"missing_preferred:{skill}"] = _normalize_phrase(skill) in missing_preferred
 
+    for field in expected.must_be_matched:
+        checks[f"signal_matched:{field}"] = getattr(result, field).value == "matched"
+    for field in expected.must_be_mismatched:
+        checks[f"signal_mismatched:{field}"] = getattr(result, field).value == "mismatched"
     for field in expected.must_be_unclear:
         checks[f"signal_unclear:{field}"] = getattr(result, field).value == "unclear"
 
@@ -158,11 +306,29 @@ def evaluate_case(
     for phrase in expected.must_not_claim_positive:
         checks[f"not_positive_claimed:{phrase}"] = (
             _normalize_phrase(phrase) not in positive_claim_text
+            and not _has_unnegated_positive_claim(result.rationale, phrase)
         )
 
     gap_text = _normalize_phrase(" ".join(result.gaps + [result.rationale]))
     for phrase in expected.must_identify_gaps:
         checks[f"gap_identified:{phrase}"] = _normalize_phrase(phrase) in gap_text
+
+    diagnostic_texts = result.gaps + [result.rationale]
+    for phrase in expected.must_describe_as_not_evidenced:
+        checks[f"not_evidenced:{phrase}"] = any(
+            _has_nearby_cue(text, phrase, NOT_EVIDENCED_CUES)
+            for text in diagnostic_texts
+        )
+    for phrase in expected.must_describe_as_confirmed_absent:
+        checks[f"confirmed_absent:{phrase}"] = any(
+            _has_nearby_cue(text, phrase, CONFIRMED_ABSENCE_CUES)
+            for text in diagnostic_texts
+        )
+    for phrase in expected.must_not_describe_as_confirmed_absent:
+        checks[f"not_asserted_absent:{phrase}"] = not any(
+            _has_nearby_cue(text, phrase, ABSENCE_ASSERTION_CUES)
+            for text in diagnostic_texts
+        )
 
     return {
         "case_id": case.id,
@@ -233,7 +399,7 @@ def evaluate_benchmark(
         "case_results": case_results,
         "ranking_checks": ranking_checks,
         "human_review_required": [
-            "Review rationale, strengths, gaps, and credential statements for semantic grounding.",
-            "Check whether score ordering is sensible; no absolute score bands are defined.",
+            "Review free-text claims and evidence scope; lexical checks cannot prove semantic grounding.",
+            "Review score/verdict effects for unknown or absent mandatory qualifications; no policy or absolute score bands are defined.",
         ],
     }

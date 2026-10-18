@@ -193,7 +193,7 @@
   },
   {
     "id": "unsupported-cloud-qualification",
-    "scenario": "unsupported_qualification",
+    "scenario": "certification_not_mentioned",
     "job": {
       "title": "Cloud AI Engineer",
       "company_name": "Fictional Blue Heron Compute",
@@ -227,7 +227,7 @@
       "skills": ["Python", "Docker", "Vertex AI"],
       "summary": "Builds cloud-hosted model APIs and internal prototypes.",
       "resume_kind": "master_resume",
-      "resume_content": "At fictional Cloudberry Studio, built a Python model API in Docker and tested a Vertex AI prototype. The resume lists no professional certifications."
+      "resume_content": "At fictional Cloudberry Studio, built a Python model API in Docker and tested a Vertex AI prototype. The resume contains no certification section or entries and does not say whether the candidate holds the required Google Professional Machine Learning Engineer certification."
     },
     "expectations": {
       "allowed_verdicts": [],
@@ -236,7 +236,9 @@
       "must_be_unclear": [],
       "must_not_claim_positive": ["Google Professional Machine Learning Engineer certification"],
       "must_identify_gaps": ["Google Professional Machine Learning Engineer certification"],
-      "score_above": []
+      "score_above": [],
+      "must_describe_as_not_evidenced": ["Google Professional Machine Learning Engineer certification"],
+      "must_not_describe_as_confirmed_absent": ["Google Professional Machine Learning Engineer certification"]
     }
   },
   {
@@ -281,9 +283,157 @@
       "allowed_verdicts": [],
       "must_match_skills": ["Python", "Hugging Face Transformers"],
       "must_be_missing_required": [],
-      "must_be_unclear": ["experience_match", "education_match"],
+      "must_be_unclear": ["experience_match", "education_match", "seniority_match"],
       "must_not_claim_positive": [],
       "must_identify_gaps": [],
+      "score_above": []
+    }
+  },
+  {
+    "id": "certification-confirmed-absent",
+    "scenario": "certification_confirmed_absent",
+    "job": {
+      "title": "Cloud Security ML Engineer",
+      "company_name": "Fictional Granite Harbor Systems",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "3+ years",
+      "analysis": {
+        "summary": "Build secure cloud machine learning services.",
+        "confidence": 0.95,
+        "required_skills": ["Python", "Docker"],
+        "preferred_skills": [],
+        "responsibilities": ["Build model APIs", "Apply cloud security controls"],
+        "qualifications": ["Experience deploying secure cloud services"],
+        "experience_years_min": 3,
+        "experience_years_max": null,
+        "seniority": "mid",
+        "remote_type": "remote",
+        "domain_keywords": ["cloud security", "machine learning"],
+        "technologies": ["Python", "Docker"],
+        "education_requirements": [],
+        "certifications": ["AWS Certified Machine Learning Specialty certification required"],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Sera Wynn",
+      "headline": "Cloud ML Engineer",
+      "location": "Remote",
+      "years_of_experience": 5,
+      "seniority": "mid",
+      "skills": ["Python", "Docker"],
+      "summary": "Builds cloud model APIs.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Granite Finch Labs, built Python model APIs in Docker and operated cloud workloads. The candidate explicitly states: I do not hold the AWS Certified Machine Learning Specialty certification."
+    },
+    "expectations": {
+      "allowed_verdicts": [],
+      "must_match_skills": ["Python", "Docker"],
+      "must_be_missing_required": [],
+      "must_be_unclear": [],
+      "must_not_claim_positive": ["AWS Certified Machine Learning Specialty certification"],
+      "must_identify_gaps": ["AWS Certified Machine Learning Specialty certification"],
+      "must_describe_as_confirmed_absent": ["AWS Certified Machine Learning Specialty certification"],
+      "score_above": []
+    }
+  },
+  {
+    "id": "preferred-skill-not-evidenced",
+    "scenario": "preferred_skill_not_evidenced",
+    "job": {
+      "title": "Data Services Engineer",
+      "company_name": "Fictional Willow Circuit",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "3+ years",
+      "analysis": {
+        "summary": "Build and maintain data services for product teams.",
+        "confidence": 0.93,
+        "required_skills": ["Python"],
+        "preferred_skills": ["Terraform"],
+        "responsibilities": ["Build service APIs", "Support production data workflows"],
+        "qualifications": ["Three years of software engineering experience"],
+        "experience_years_min": 3,
+        "experience_years_max": null,
+        "seniority": "mid",
+        "remote_type": "remote",
+        "domain_keywords": ["data services"],
+        "technologies": ["Python", "Terraform"],
+        "education_requirements": [],
+        "certifications": [],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Remy Hart",
+      "headline": "Backend Engineer",
+      "location": "Remote",
+      "years_of_experience": 4,
+      "seniority": "mid",
+      "skills": ["Python", "FastAPI"],
+      "summary": "Builds APIs and backend services.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Alder Loop, built Python APIs and supported production data workflows. The supplied resume does not mention Terraform."
+    },
+    "expectations": {
+      "allowed_verdicts": [],
+      "must_match_skills": ["Python"],
+      "must_be_missing_required": [],
+      "must_be_missing_preferred": ["Terraform"],
+      "must_be_matched": ["experience_match"],
+      "must_be_unclear": [],
+      "must_identify_gaps": ["Terraform"],
+      "must_describe_as_not_evidenced": ["Terraform"],
+      "must_not_describe_as_confirmed_absent": ["Terraform"],
+      "score_above": []
+    }
+  },
+  {
+    "id": "total-years-without-relevant-experience",
+    "scenario": "relevant_experience_gap",
+    "job": {
+      "title": "ML Platform Engineer",
+      "company_name": "Fictional North Ridge Compute",
+      "location": "Remote",
+      "employment_type": "Full-time",
+      "experience_level": "3+ years relevant experience",
+      "analysis": {
+        "summary": "Support engineering for machine learning infrastructure.",
+        "confidence": 0.94,
+        "required_skills": [],
+        "preferred_skills": [],
+        "responsibilities": ["Support model-serving infrastructure", "Operate ML platform services"],
+        "qualifications": ["At least three years of relevant ML platform engineering experience"],
+        "experience_years_min": 3,
+        "experience_years_max": null,
+        "seniority": "mid",
+        "remote_type": "remote",
+        "domain_keywords": ["machine learning infrastructure"],
+        "technologies": [],
+        "education_requirements": [],
+        "certifications": [],
+        "ambiguities": []
+      }
+    },
+    "candidate": {
+      "name": "Drew Calder",
+      "headline": "Senior Accountant",
+      "location": "Remote",
+      "years_of_experience": 8,
+      "seniority": "senior",
+      "skills": ["financial reporting", "ledger reconciliation"],
+      "summary": "Eight years in accounting and financial controls.",
+      "resume_kind": "master_resume",
+      "resume_content": "At fictional Stone Harbor Accounting, handled financial reporting, ledger reconciliation, and audit support for eight years. The resume explicitly says this work did not include software engineering or ML platform roles."
+    },
+    "expectations": {
+      "allowed_verdicts": [],
+      "must_match_skills": [],
+      "must_be_missing_required": [],
+      "must_be_mismatched": ["experience_match"],
+      "must_be_unclear": [],
+      "must_identify_gaps": ["relevant ML platform engineering experience"],
       "score_above": []
     }
   }

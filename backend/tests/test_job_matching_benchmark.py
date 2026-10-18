@@ -33,17 +33,20 @@ def valid_result(**overrides) -> MatchResult:
     return MatchResult.model_validate(payload)
 
 
-def test_fixture_has_six_distinct_synthetic_scenarios() -> None:
+def test_fixture_has_nine_distinct_synthetic_scenarios() -> None:
     cases = load_cases()
 
-    assert len(cases) == 6
+    assert len(cases) == 9
     assert len({case.id for case in cases}) == len(cases)
     assert {case.scenario for case in cases} == {
         "strong_match",
         "partial_match",
         "missing_essential_skills",
         "unrelated_role",
-        "unsupported_qualification",
+        "certification_not_mentioned",
+        "certification_confirmed_absent",
+        "preferred_skill_not_evidenced",
+        "relevant_experience_gap",
         "missing_evidence",
     }
     assert all(case.candidate.name and case.candidate.resume_content for case in cases)
@@ -122,6 +125,166 @@ def test_unsupported_qualification_must_not_be_a_positive_claim() -> None:
         "not_positive_claimed:Google Professional Machine Learning Engineer certification"
     ] is False
 
+    certified_rationale = good.model_copy(
+        update={
+            "rationale": (
+                "The candidate is certified as a Google Professional Machine Learning Engineer."
+            )
+        }
+    )
+    assert evaluate_case(case, certified_rationale)["checks"][
+        "not_positive_claimed:Google Professional Machine Learning Engineer certification"
+    ] is False
+
+    unsupported_rationale = good.model_copy(
+        update={
+            "rationale": (
+                "The candidate holds the Google Professional Machine Learning Engineer certification."
+            )
+        }
+    )
+    result = evaluate_case(case, unsupported_rationale)
+    assert result["checks"][
+        "not_positive_claimed:Google Professional Machine Learning Engineer certification"
+    ] is False
+
+
+def test_unmentioned_certification_requires_qualified_evidence_language() -> None:
+    case = next(case for case in load_cases() if case.id == "unsupported-cloud-qualification")
+    result = valid_result(
+        matched_skills=["Python", "Docker", "Vertex AI"],
+        missing_required_skills=[],
+        missing_preferred_skills=[],
+        strengths=["Python, Docker, and Vertex AI evidence is present."],
+        gaps=[
+            "The required Google Professional Machine Learning Engineer certification is not evidenced in the resume."
+        ],
+        rationale=(
+            "Cloud project experience is documented, but the supplied resume does not establish "
+            "whether the candidate holds the Google Professional Machine Learning Engineer certification."
+        ),
+    )
+
+    evaluation = evaluate_case(case, result)
+    assert evaluation["checks"][
+        "not_evidenced:Google Professional Machine Learning Engineer certification"
+    ] is True
+    assert evaluation["checks"][
+        "not_asserted_absent:Google Professional Machine Learning Engineer certification"
+    ] is True
+
+    lacks_evidence = result.model_copy(
+        update={
+            "rationale": (
+                "The supplied resume lacks evidence of whether the candidate holds the Google Professional "
+                "Machine Learning Engineer certification."
+            )
+        }
+    )
+    evidence_evaluation = evaluate_case(case, lacks_evidence)
+    assert evidence_evaluation["checks"][
+        "not_evidenced:Google Professional Machine Learning Engineer certification"
+    ] is True
+    assert evidence_evaluation["checks"][
+        "not_asserted_absent:Google Professional Machine Learning Engineer certification"
+    ] is True
+
+    unrelated_positive = result.model_copy(
+        update={
+            "rationale": (
+                "The candidate has strong Python experience, but the required Google Professional "
+                "Machine Learning Engineer certification is not evidenced."
+            )
+        }
+    )
+    assert evaluate_case(case, unrelated_positive)["checks"][
+        "not_positive_claimed:Google Professional Machine Learning Engineer certification"
+    ] is True
+
+    overstatement = result.model_copy(
+        update={
+            "gaps": [
+                "The candidate lacks the required Google Professional Machine Learning Engineer certification."
+            ],
+            "rationale": "The candidate lacks the required Google Professional Machine Learning Engineer certification.",
+        }
+    )
+    evaluation = evaluate_case(case, overstatement)
+    assert evaluation["checks"][
+        "not_evidenced:Google Professional Machine Learning Engineer certification"
+    ] is False
+    assert evaluation["checks"][
+        "not_asserted_absent:Google Professional Machine Learning Engineer certification"
+    ] is False
+
+
+def test_explicitly_absent_certification_is_distinguished_from_omission() -> None:
+    case = next(case for case in load_cases() if case.id == "certification-confirmed-absent")
+    phrase = "AWS Certified Machine Learning Specialty certification"
+    confirmed = valid_result(
+        matched_skills=["Python", "Docker"],
+        missing_required_skills=[],
+        strengths=["Python and Docker experience is documented."],
+        gaps=[f"The candidate explicitly states they do not hold the {phrase}."],
+        rationale=f"The supplied resume explicitly states they do not hold the {phrase}.",
+    )
+    evaluation = evaluate_case(case, confirmed)
+    assert evaluation["checks"][f"confirmed_absent:{phrase}"] is True
+
+    merely_unmentioned = confirmed.model_copy(
+        update={
+            "gaps": [f"The {phrase} is not evidenced in the resume."],
+            "rationale": f"The resume does not mention whether the candidate holds the {phrase}.",
+        }
+    )
+    assert evaluate_case(case, merely_unmentioned)["checks"][
+        f"confirmed_absent:{phrase}"
+    ] is False
+
+
+def test_preferred_skill_absence_is_not_reported_as_confirmed_inability() -> None:
+    case = next(case for case in load_cases() if case.id == "preferred-skill-not-evidenced")
+    result = valid_result(
+        matched_skills=["Python"],
+        missing_required_skills=[],
+        missing_preferred_skills=["Terraform"],
+        strengths=["Python API experience is documented."],
+        gaps=["Terraform is preferred but not mentioned in the supplied resume."],
+        rationale="Terraform is not evidenced; the resume does not establish hands-on use.",
+    )
+    evaluation = evaluate_case(case, result)
+    assert evaluation["checks"]["missing_preferred:Terraform"] is True
+    assert evaluation["checks"]["not_evidenced:Terraform"] is True
+    assert evaluation["checks"]["not_asserted_absent:Terraform"] is True
+
+    wrongly_confirmed = result.model_copy(
+        update={"gaps": ["The candidate lacks Terraform and cannot use it."]}
+    )
+    assert evaluate_case(case, wrongly_confirmed)["checks"][
+        "not_asserted_absent:Terraform"
+    ] is False
+
+
+def test_total_tenure_does_not_satisfy_explicit_relevant_experience_requirement() -> None:
+    case = next(case for case in load_cases() if case.id == "total-years-without-relevant-experience")
+    result = valid_result(
+        matched_skills=[],
+        missing_required_skills=[],
+        experience_match=MatchSignal.mismatched,
+        gaps=["No relevant ML platform engineering experience is evidenced."],
+        rationale=(
+            "Eight years of accounting tenure are documented, but no relevant ML platform engineering experience is shown."
+        ),
+    )
+    evaluation = evaluate_case(case, result)
+    assert evaluation["checks"]["signal_mismatched:experience_match"] is True
+    assert evaluation["checks"]["gap_identified:relevant ML platform engineering experience"] is True
+
+    total_years_only = result.model_copy(update={"experience_match": MatchSignal.matched})
+    assert evaluate_case(case, total_years_only)["checks"][
+        "signal_mismatched:experience_match"
+    ] is False
+
 
 def test_missing_evidence_case_requires_unclear_signals() -> None:
     case = next(
@@ -135,6 +298,7 @@ def test_missing_evidence_case_requires_unclear_signals() -> None:
             missing_required_skills=[],
             experience_match=MatchSignal.unclear,
             education_match=MatchSignal.unclear,
+            seniority_match=MatchSignal.unclear,
         ),
     )["passed"] is True
     assert evaluate_case(
@@ -144,6 +308,7 @@ def test_missing_evidence_case_requires_unclear_signals() -> None:
             missing_required_skills=[],
             experience_match=MatchSignal.matched,
             education_match=MatchSignal.mismatched,
+            seniority_match=MatchSignal.unclear,
         ),
     )["passed"] is False
 
@@ -194,9 +359,41 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
             missing_required_skills=[],
             experience_match=MatchSignal.unclear,
             education_match=MatchSignal.unclear,
+            seniority_match=MatchSignal.unclear,
             strengths=["Python and Transformers experience is supported."],
             gaps=["Education and employment dates are not provided."],
             rationale="Relevant skills are shown; education and experience duration remain unclear.",
+        ),
+        "certification-confirmed-absent": valid_result(
+            score=60,
+            matched_skills=["Python", "Docker"],
+            missing_required_skills=[],
+            strengths=["Python and Docker experience is documented."],
+            gaps=[
+                "The candidate explicitly states they do not hold the AWS Certified Machine Learning Specialty certification."
+            ],
+            rationale=(
+                "The resume explicitly states they do not hold the AWS Certified Machine Learning Specialty certification."
+            ),
+        ),
+        "preferred-skill-not-evidenced": valid_result(
+            score=72,
+            matched_skills=["Python"],
+            missing_required_skills=[],
+            missing_preferred_skills=["Terraform"],
+            strengths=["Python API experience is documented."],
+            gaps=["Terraform is preferred but not mentioned in the supplied resume."],
+            rationale="Terraform is not evidenced in the supplied resume.",
+        ),
+        "total-years-without-relevant-experience": valid_result(
+            score=22,
+            matched_skills=[],
+            missing_required_skills=[],
+            experience_match=MatchSignal.mismatched,
+            gaps=["No relevant ML platform engineering experience is evidenced."],
+            rationale=(
+                "Eight years of accounting tenure are documented, but no relevant ML platform engineering experience is shown."
+            ),
         ),
     }
 
