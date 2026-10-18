@@ -28,7 +28,7 @@ def upgrade() -> None:
         sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
         sa.CheckConstraint(
             "attempts >= 0",
-            name="ck_discovery_daily_usage_attempts_nonnegative",
+            name="attempts_nonnegative",
         ),
         sa.PrimaryKeyConstraint(
             "usage_date", "scope_key", name="pk_discovery_daily_usage"

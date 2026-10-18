@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "candidates",
     "companies",
     "documents",
+    "discovery_daily_usage",
     "job_analyses",
     "jobs",
     "matches",

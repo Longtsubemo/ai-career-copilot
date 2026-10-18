@@ -31,7 +31,7 @@ from tests.fake_clients import (
     search_result,
 )
 
-JOB_URL = "https://example.com/jobs/ai-engineer-bangalore"
+JOB_URL = "https://boards.greenhouse.io/acme/jobs/1234567"
 
 RESUME = (
     b"Ada Lovelace\nEXPERIENCE: five years building agent pipelines in python."
@@ -51,7 +51,13 @@ def _pipeline_clients():
             JOB_URL: listing_page(
                 JOB_URL,
                 title="Senior AI Engineer",
-                description="Own the agent platform end to end.",
+                description=(
+                    "Design, build, and maintain production AI agent systems. "
+                    "Investigate reliability issues, collaborate with product "
+                    "and engineering teams, and improve deployed services. "
+                    "Qualifications include strong Python skills, experience "
+                    "shipping machine-learning systems, and clear communication."
+                ),
                 location="Bangalore",
                 company="Acme Inc.",
                 employment_type="Full-time",
@@ -149,8 +155,12 @@ def test_full_workflow_from_profile_to_application(client_factory, session):
         CoverLetterResult,
     ]
     assert searxng.queries == [
-        "AI Engineer Bangalore jobs 1-3 years",
-        "Artificial Intelligence Engineer Bangalore jobs 1-3 years",
+        "AI Engineer Bangalore jobs 1-3 years (site:boards.greenhouse.io OR "
+        "site:jobs.ashbyhq.com OR site:jobs.lever.co OR "
+        "site:jobs.smartrecruiters.com)",
+        "Artificial Intelligence Engineer Bangalore jobs 1-3 years "
+        "(site:boards.greenhouse.io OR site:jobs.ashbyhq.com OR "
+        "site:jobs.lever.co OR site:jobs.smartrecruiters.com)",
     ]
 
 
