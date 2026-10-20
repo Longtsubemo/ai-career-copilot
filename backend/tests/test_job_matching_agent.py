@@ -450,10 +450,10 @@ class TestPrompt:
 
         assert '"education_requirements": []' in prompt
         assert (
-            "if no education requirement and no candidate education evidence are supplied"
+            'if no education requirement and no candidate education evidence are supplied, '
+            'use "unclear" because the schema has no "not_applicable" value'
             in instruction
         )
-        assert 'use "unclear"' in instruction
         assert '"not_applicable"' in instruction
 
     def test_stated_education_requirement_with_insufficient_evidence_is_unclear(
@@ -569,6 +569,7 @@ class TestPrompt:
 
     def test_system_instruction_uses_the_job_stated_experience_requirement(self) -> None:
         instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        assert "never invent experience" in instruction
         assert (
             "for a generic minimum total-years requirement, compare documented total professional tenure;"
             in instruction
