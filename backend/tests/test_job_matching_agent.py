@@ -371,8 +371,8 @@ class TestMatchResult:
 
 
 class TestPrompt:
-    def test_prompt_version_is_the_agreed_v3(self) -> None:
-        assert PROMPT_VERSION == "job-matching-v3"
+    def test_prompt_version_is_the_agreed_v4(self) -> None:
+        assert PROMPT_VERSION == "job-matching-v4"
 
     def test_prompt_contains_job_evidence(self) -> None:
         prompt = build_matching_prompt(**PROMPT_ARGS)
@@ -428,6 +428,115 @@ class TestPrompt:
         assert "required skills more heavily" in SYSTEM_INSTRUCTION
         assert "unclear" in SYSTEM_INSTRUCTION
         assert "Return only the JSON object" in SYSTEM_INSTRUCTION
+
+    def test_required_qualifications_are_named_as_individual_gaps(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "qualifications": [
+                        "CPA license is required",
+                        "Three years of nonprofit audit experience required",
+                    ],
+                },
+                "resume_content": "Prepared nonprofit financial reports.",
+            }
+        )
+
+        assert '"cpa license is required"' in prompt.casefold()
+        assert (
+            '"three years of nonprofit audit experience required"'
+            in prompt.casefold()
+        )
+        assert "for each explicitly mandatory qualification" in instruction
+        assert "a separate, specific entry to \"gaps\"" in instruction
+        assert (
+            "do not collapse distinct qualifications into a generic statement"
+            in instruction
+        )
+        assert (
+            "do not assume every item in a generic \"qualifications\" or "
+            "\"certifications\" list is mandatory"
+        ) in instruction
+
+    def test_preferred_qualifications_are_not_treated_as_mandatory(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "preferred_skills": ["Power BI"],
+                },
+            }
+        )
+
+        assert '"power bi"' in prompt.casefold()
+        assert 'items in "preferred_skills" are preferred' in instruction
+        assert "preferred or nice-to-have remains preferred" in instruction
+        assert (
+            "do not present preferred qualifications as mandatory gaps"
+            in instruction
+        )
+        assert "only as a minor consideration" in instruction
+
+    def test_unclassified_qualification_status_is_preserved_as_unclear(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "qualifications": ["Production GPU training experience"],
+                },
+            }
+        )
+
+        assert '"production gpu training experience"' in prompt.casefold()
+        assert (
+            "if a listed qualification's status is unclear, preserve that uncertainty"
+            in instruction
+        )
+        assert "name it individually in \"gaps\"" in instruction
+        assert "without treating it as essential" in instruction
+
+    def test_related_technical_capabilities_are_not_substituted(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+
+        assert "gpu inference is not gpu training" in instruction
+        assert "model serving is not model training or fine-tuning" in instruction
+        assert "distributed inference is not distributed training" in instruction
+        assert "model deployment is not model development" in instruction
+        assert "acknowledge related work as transferable experience" in instruction
+
+    def test_requirement_guidance_applies_to_non_ai_roles(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            job_title="Staff Accountant",
+            company_name="Example Finance",
+            job_location="Remote",
+            employment_type="Full-time",
+            experience_level="3+ years",
+            analysis={
+                "summary": "Prepare financial reports and support audits.",
+                "required_skills": ["financial reporting"],
+                "preferred_skills": ["Power BI"],
+                "qualifications": ["CPA license required"],
+            },
+            candidate_name="Ada Lovelace",
+            resume_kind="master_resume",
+            resume_content="Prepared financial reports and audit schedules.",
+        )
+
+        assert '"cpa license required"' in prompt.casefold()
+        assert '"power bi"' in prompt.casefold()
+        assert "for any role" in instruction
+        assert (
+            "these examples do not make ai or gpu experience a universal requirement"
+            in instruction
+        )
 
     def test_system_instruction_distinguishes_missing_from_absent_evidence(self) -> None:
         instruction = " ".join(SYSTEM_INSTRUCTION.split())
@@ -992,28 +1101,27 @@ class TestMatchingWithDatabase:
     def test_new_prompt_version_creates_new_historical_match(
         self, session, world
     ) -> None:
-        v1 = JobMatchingAgent(FakeGeminiClient(MATCH))
-        first_envelope = v1.match(
-            session,
-            job_id=world.job.id,
-            candidate_id=world.candidate.id,
-            resume_document_id=world.resume.id,
-        )
-
         v3 = JobMatchingAgent(
-            FakeGeminiClient(MATCH_V2, model="gemini-other"),
-            prompt_version="job-matching-v4",
+            FakeGeminiClient(MATCH), prompt_version="job-matching-v3"
         )
-        second_envelope = v3.match(
+        first_envelope = v3.match(
             session,
             job_id=world.job.id,
             candidate_id=world.candidate.id,
             resume_document_id=world.resume.id,
         )
 
-        assert first_envelope["prompt_version"] == PROMPT_VERSION
+        v4 = JobMatchingAgent(FakeGeminiClient(MATCH_V2, model="gemini-other"))
+        second_envelope = v4.match(
+            session,
+            job_id=world.job.id,
+            candidate_id=world.candidate.id,
+            resume_document_id=world.resume.id,
+        )
+
+        assert first_envelope["prompt_version"] == "job-matching-v3"
         assert first_envelope["match"] == MATCH.model_dump(mode="json")
-        assert second_envelope["prompt_version"] == "job-matching-v4"
+        assert second_envelope["prompt_version"] == PROMPT_VERSION
         assert second_envelope["model"] == "gemini-other"
         assert second_envelope["match"] == MATCH_V2.model_dump(mode="json")
         assert match_count(session) == 2
@@ -1022,13 +1130,13 @@ class TestMatchingWithDatabase:
             select(Match).where(Match.job_id == world.job.id)
         ).all()
         by_version = {row.prompt_version: row for row in rows}
-        assert set(by_version) == {PROMPT_VERSION, "job-matching-v4"}
-        assert by_version[PROMPT_VERSION].score == 72.5
+        assert set(by_version) == {"job-matching-v3", PROMPT_VERSION}
+        assert by_version["job-matching-v3"].score == 72.5
+        assert by_version["job-matching-v3"].verdict is not None
+        assert by_version["job-matching-v3"].verdict["verdict"] == "good_match"
+        assert by_version[PROMPT_VERSION].score == 41.0
         assert by_version[PROMPT_VERSION].verdict is not None
-        assert by_version[PROMPT_VERSION].verdict["verdict"] == "good_match"
-        assert by_version["job-matching-v4"].score == 41.0
-        assert by_version["job-matching-v4"].verdict is not None
-        assert by_version["job-matching-v4"].verdict["verdict"] == "weak_match"
+        assert by_version[PROMPT_VERSION].verdict["verdict"] == "weak_match"
 
     def test_conflicting_persist_keeps_the_first_writer(self, session, world) -> None:
         first = MatchResult(

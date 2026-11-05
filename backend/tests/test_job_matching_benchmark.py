@@ -5,6 +5,7 @@ import json
 import pytest
 
 from app.agents.job_matching.contract import MatchResult, MatchSignal, MatchVerdict
+from app.agents.job_matching.prompt import PROMPT_VERSION
 from evaluation.job_matching import (
     build_case_prompt,
     evaluate_benchmark,
@@ -620,6 +621,8 @@ def test_runner_executes_only_requested_cases_in_requested_order(
     assert client.calls == len(selected_ids)
     assert [row["case_id"] for row in artifact["results"]] == selected_ids
     assert artifact["deterministic_evaluation"]["complete"] is True
+    assert artifact["prompt_version"] == PROMPT_VERSION == "job-matching-v4"
+    assert all(row["prompt_version"] == PROMPT_VERSION for row in artifact["results"])
 
 
 def test_runner_defaults_to_all_configured_cases(monkeypatch, tmp_path) -> None:
