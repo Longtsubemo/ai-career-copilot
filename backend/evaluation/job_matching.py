@@ -31,6 +31,9 @@ EXPECTED_SCENARIOS = frozenset(
         "missing_evidence",
     }
 )
+_GAP_PHRASE_ALIASES = {
+    "production gpu training experience": ("experience with production gpu training",),
+}
 
 NOT_EVIDENCED_CUES = (
     "not evidenced",
@@ -145,6 +148,13 @@ class MatchBenchmarkCase(BaseModel):
 
 def _normalize_phrase(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+
+def _gap_phrase_is_identified(gap_text: str, phrase: str) -> bool:
+    """Match an expected gap, including narrowly approved equivalent wording."""
+    normalized = _normalize_phrase(phrase)
+    variants = (normalized, *_GAP_PHRASE_ALIASES.get(normalized, ()))
+    return any(variant in gap_text for variant in variants)
 
 
 def _has_nearby_cue(
@@ -311,7 +321,9 @@ def evaluate_case(
 
     gap_text = _normalize_phrase(" ".join(result.gaps + [result.rationale]))
     for phrase in expected.must_identify_gaps:
-        checks[f"gap_identified:{phrase}"] = _normalize_phrase(phrase) in gap_text
+        checks[f"gap_identified:{phrase}"] = _gap_phrase_is_identified(
+            gap_text, phrase
+        )
 
     diagnostic_texts = result.gaps + [result.rationale]
     for phrase in expected.must_describe_as_not_evidenced:

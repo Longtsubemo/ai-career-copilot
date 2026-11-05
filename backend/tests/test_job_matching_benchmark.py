@@ -128,6 +128,60 @@ def test_generic_years_match_does_not_hide_missing_gpu_training_evidence() -> No
     assert evaluate_case(case, conflated_experience)["passed"] is False
 
 
+@pytest.mark.parametrize(
+    ("gpu_gap", "expected"),
+    [
+        ("No documented experience with production GPU training.", True),
+        ("Production GPU training experience is missing.", True),
+        ("No evidence of production GPU training experience.", True),
+        ("GPU inference optimization experience is missing.", False),
+        ("No experience deploying GPU inference pipelines.", False),
+        ("The candidate lacks generic ML experience.", False),
+    ],
+)
+def test_gpu_training_gap_matching_accepts_only_narrow_equivalents(
+    gpu_gap: str, expected: bool
+) -> None:
+    case = next(case for case in load_cases() if case.id == "missing-essential-ml")
+    result = valid_result(
+        verdict=MatchVerdict.poor_match,
+        matched_skills=["Python"],
+        missing_required_skills=["PyTorch", "CUDA", "distributed training"],
+        experience_match=MatchSignal.matched,
+        gaps=[
+            "PyTorch, CUDA, and distributed training are not evidenced.",
+            gpu_gap,
+        ],
+        rationale="The resume supports Python and business reporting only.",
+    )
+
+    evaluation = evaluate_case(case, result)
+
+    assert evaluation["checks"][
+        "gap_identified:production GPU training experience"
+    ] is expected
+
+
+def test_gpu_training_gap_alias_does_not_change_unrelated_gap_matching() -> None:
+    case = next(case for case in load_cases() if case.id == "partial-data-platform")
+    result = valid_result(
+        gaps=["Kubernetes is not evidenced."],
+        rationale="Python and SQL are supported by the supplied resume.",
+    )
+    gpu_alias_only = result.model_copy(
+        update={
+            "gaps": ["Experience with production GPU training is not documented."],
+            "rationale": "Python and SQL are supported by the supplied resume.",
+        }
+    )
+
+    assert evaluate_case(case, result)["checks"]["gap_identified:Kubernetes"] is True
+    assert (
+        evaluate_case(case, gpu_alias_only)["checks"]["gap_identified:Kubernetes"]
+        is False
+    )
+
+
 def test_fixture_rejects_duplicate_ids_and_unknown_ranking_references(tmp_path) -> None:
     all_cases = [case.model_dump(mode="json") for case in load_cases()]
     duplicate_file = tmp_path / "duplicate.json"
