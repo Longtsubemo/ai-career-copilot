@@ -85,6 +85,7 @@ ANALYSIS_PAYLOAD: dict[str, object] = {
     "preferred_skills": ["kubernetes"],
     "responsibilities": ["design agent pipelines"],
     "qualifications": ["3+ years backend experience"],
+    "requirement_items": [],
     "experience_years_min": 3,
     "experience_years_max": 6,
     "seniority": "mid",

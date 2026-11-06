@@ -14,6 +14,7 @@ import pytest
 from google.genai.errors import APIError
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.agents.job_analysis.contract import JobAnalysisResponse
 from app.clients.gemini import DEFAULT_MODEL, GeminiClient, GeminiError
 from tests.fake_clients import RecordingGeminiApi
 
@@ -118,6 +119,61 @@ def test_the_schema_is_sent_as_a_raw_json_schema_dict() -> None:
     assert raw["additionalProperties"] is False
     assert raw["type"] == "object"
     assert config.response_schema is None
+
+
+def test_job_analysis_requirement_items_use_the_generated_schema_and_validate() -> None:
+    payload = {
+        "summary": "Backend role.",
+        "confidence": 0.8,
+        "qualifications": ["AWS certification"],
+        "certifications": ["AWS certification"],
+        "requirement_items": [
+            {
+                "item": "AWS certification",
+                "category": "certification",
+                "status": "unclear",
+                "evidence": ["AWS certification"],
+            }
+        ],
+    }
+    api = RecordingGeminiApi(parsed=None, text=json.dumps(payload))
+    client = make_client(api)
+
+    result = client.generate_structured(
+        prompt="Analyze this job posting.", schema=JobAnalysisResponse
+    )
+
+    assert isinstance(result, JobAnalysisResponse)
+    requirement = result.requirement_items[0]
+    assert requirement.item == "AWS certification"
+    assert requirement.category.value == "certification"
+    assert requirement.status.value == "unclear"
+    assert requirement.evidence == ["AWS certification"]
+    sent_schema = api.calls[0]["config"].response_json_schema
+    assert sent_schema == JobAnalysisResponse.model_json_schema()
+    assert sent_schema["$defs"]["RequirementCategory"]["enum"] == [
+        "skill",
+        "qualification",
+        "certification",
+    ]
+    assert sent_schema["$defs"]["RequirementStatus"]["enum"] == [
+        "required",
+        "preferred",
+        "unclear",
+    ]
+
+
+def test_job_analysis_response_rejects_missing_requirement_items() -> None:
+    api = RecordingGeminiApi(
+        parsed=None,
+        text=json.dumps({"summary": "Backend role.", "confidence": 0.8}),
+    )
+    client = make_client(api)
+
+    with pytest.raises(GeminiError, match="unusable structured output"):
+        client.generate_structured(
+            prompt="Analyze this job posting.", schema=JobAnalysisResponse
+        )
 
 
 def test_empty_response_raises_a_structured_error() -> None:

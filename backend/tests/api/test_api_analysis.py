@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, select
 
+from app.agents.job_analysis.contract import JobAnalysisResponse
 from app.clients.gemini import GeminiError
 from app.models.agent_run import AgentRun
 from app.models.job_analysis import JobAnalysis
@@ -30,17 +31,17 @@ def test_analyze_runs_and_persists(client_factory, session):
     assert body["job_id"] == str(world.job.id)
     assert body["output"] == {
         "job_id": str(world.job.id),
-        "prompt_version": "job-analysis-v1",
+        "prompt_version": "job-analysis-v2",
         "model": "gemini-3.8-flash",
         "analysis": ANALYSIS_PAYLOAD,
     }
     assert len(gemini.calls) == 1
-    assert gemini.calls[0]["schema"] is type(ANALYSIS_RESULT)
+    assert gemini.calls[0]["schema"] is JobAnalysisResponse
 
     row = session.execute(select(JobAnalysis)).scalars().one()
     assert row.status.value == "succeeded"
     assert row.job_id == world.job.id
-    assert row.prompt_version == "job-analysis-v1"
+    assert row.prompt_version == "job-analysis-v2"
 
 
 def test_repeated_analyze_reuses_run_and_analysis(client_factory, session):
