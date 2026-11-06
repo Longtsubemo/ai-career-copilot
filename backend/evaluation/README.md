@@ -1,6 +1,6 @@
 # Synthetic job-matching benchmark
 
-This benchmark uses nine fictional resumes and job analyses. It is separate
+This benchmark uses ten fictional resumes and job analyses. It is separate
 from the application and normal test suite. It does not run at startup and
 pytest never calls Gemini.
 
@@ -12,7 +12,8 @@ pytest never calls Gemini.
   and unrelated-role cases. Because this job has no education requirement and
   the candidate evidence contains no education information,
   `education_match` must be `unclear`.
-- **Partial match:** Python and SQL are evidenced but Kubernetes is absent.
+- **Partial match:** Python and SQL are evidenced but Kubernetes is not listed
+  in the supplied resume.
   Kubernetes must appear as a required gap; verdict is `partial_match` or
   `weak_match`. Its score must rank above the essential-skill-gap and unrelated
   cases.
@@ -32,7 +33,7 @@ pytest never calls Gemini.
   it as absent and must identify it as a gap.
 - **Preferred skill not evidenced:** a required skill is supported while a
   preferred skill is not mentioned. Report the preferred skill as
-  `missing_preferred_skills` and describe the evidence as absent from the
+  `missing_preferred_skills` and describe it as not evidenced in the
   supplied resume, not as proof the candidate cannot do it.
 - **Relevant experience gap:** the candidate has sufficient total professional
   tenure but the job explicitly requires relevant ML platform experience and
@@ -41,6 +42,11 @@ pytest never calls Gemini.
 - **Missing evidence:** the resume supports NLP skills but gives no education
   history or employment dates. Education, experience, and seniority signals
   must be `unclear`, not presumed matched or mismatched.
+- **Transferable experience:** the candidate documents production GPU
+  inference experience but no GPU training evidence. The inference work should
+  be acknowledged as relevant/transferable without satisfying the separate
+  production GPU training requirement. The data-platform case also tests VM
+  operations as related experience without treating them as Kubernetes.
 
 ## Evidence-aware interpretation
 
@@ -89,10 +95,14 @@ benchmark only checks the explicit pairwise ranking constraints above.
 
 The evaluator checks schema-valid outputs, selected verdicts, matched and
 missing required/preferred skill labels, required signal states, evidence
-language near named qualifications, selected forbidden positive claims, gap
-mentions, and declared pairwise score ordering. Positive-claim checks cover
-the structured positive fields and a narrow set of common verb constructions
-in rationale text. Evidence-language checks use nearby cue phrases. These are
+language near named qualifications, selected forbidden positive claims, and
+gap mentions from the `gaps` field. Each expected mandatory gap must have its
+own gap entry with a nearby missing/evidence cue; rationale-only mentions and
+one combined entry reused for several requirements do not pass. Preferred
+skills are checked so they are not also classified as missing required.
+Transferability cues must occur near the named experience in the same clause
+of a strength. Positive-claim checks cover structured positive fields and a
+narrow set of common verb or predicate constructions in free text. These are
 reproducible lexical checks, not semantic entailment or a general negation
 detector. They can miss paraphrases or misread scope; ambiguous wording,
 strengths, gaps, rationales, and credentials still require human review. The
@@ -107,7 +117,7 @@ From `backend/`, configure `CAREER_COPILOT_GEMINI_API_KEY` and optionally
 .\.venv\Scripts\python.exe -m evaluation.run_job_matching --confirm-provider-calls
 ```
 
-The acknowledgement flag is mandatory. A complete run makes exactly nine
+The acknowledgement flag is mandatory. A complete run makes exactly ten
 Gemini requests, one per case. The existing client configures a single attempt
 per request; the runner stops on the first failure and does not retry. Model
 calls may incur provider charges or consume quota. Do not use real resumes or
@@ -138,7 +148,7 @@ For one case, pass only one `--case-id`:
 
 Unknown IDs and duplicate IDs are rejected before Gemini configuration is read,
 an artifact is reserved, or a provider request is made. Without `--case-id`,
-the runner keeps the default behavior and runs all nine configured cases. A
+the runner keeps the default behavior and runs all ten configured cases. A
 selected run makes at most one request per selected case and stops after the
 first failure; selection reduces the maximum request count, but does not
 guarantee provider quota or successful completion.

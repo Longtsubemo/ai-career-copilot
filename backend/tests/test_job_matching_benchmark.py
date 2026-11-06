@@ -34,10 +34,10 @@ def valid_result(**overrides) -> MatchResult:
     return MatchResult.model_validate(payload)
 
 
-def test_fixture_has_nine_distinct_synthetic_scenarios() -> None:
+def test_fixture_has_ten_distinct_synthetic_scenarios() -> None:
     cases = load_cases()
 
-    assert len(cases) == 9
+    assert len(cases) == 10
     assert len({case.id for case in cases}) == len(cases)
     assert {case.scenario for case in cases} == {
         "strong_match",
@@ -49,9 +49,17 @@ def test_fixture_has_nine_distinct_synthetic_scenarios() -> None:
         "preferred_skill_not_evidenced",
         "relevant_experience_gap",
         "missing_evidence",
+        "transferable_experience",
     }
     assert all(case.candidate.name and case.candidate.resume_content for case in cases)
     assert all("Fictional" in case.job.company_name for case in cases)
+
+
+def test_every_preferred_skill_is_excluded_from_required_gap_expectations() -> None:
+    for case in load_cases():
+        preferred = set(case.job.analysis.get("preferred_skills", []))
+        excluded = set(case.expectations.must_not_be_missing_required)
+        assert preferred <= excluded, case.id
 
 
 def test_benchmark_prompts_use_case_job_and_resume_evidence() -> None:
@@ -99,7 +107,9 @@ def test_generic_years_match_does_not_hide_missing_gpu_training_evidence() -> No
         missing_required_skills=["PyTorch", "CUDA", "distributed training"],
         experience_match=MatchSignal.matched,
         gaps=[
-            "PyTorch, CUDA, and distributed training are not evidenced.",
+            "PyTorch is not evidenced.",
+            "CUDA is not evidenced.",
+            "Distributed training is not evidenced.",
             "Production GPU training experience is not evidenced.",
         ],
         rationale=(
@@ -115,7 +125,13 @@ def test_generic_years_match_does_not_hide_missing_gpu_training_evidence() -> No
     assert evaluation["passed"] is True
 
     missing_gpu_gap = result.model_copy(
-        update={"gaps": ["PyTorch, CUDA, and distributed training are not evidenced."]}
+        update={
+            "gaps": [
+                "PyTorch is not evidenced.",
+                "CUDA is not evidenced.",
+                "Distributed training is not evidenced.",
+            ]
+        }
     )
     evaluation = evaluate_case(case, missing_gpu_gap)
     assert evaluation["checks"][
@@ -130,14 +146,51 @@ def test_generic_years_match_does_not_hide_missing_gpu_training_evidence() -> No
 
 
 @pytest.mark.parametrize(
+    "omitted_gap",
+    [
+        "PyTorch",
+        "CUDA",
+        "distributed training",
+        "production GPU training experience",
+    ],
+)
+def test_each_expected_gap_must_be_in_gaps_not_only_rationale(
+    omitted_gap: str,
+) -> None:
+    case = next(case for case in load_cases() if case.id == "missing-essential-ml")
+    expected_gaps = case.expectations.must_identify_gaps
+    result = valid_result(
+        verdict=MatchVerdict.poor_match,
+        matched_skills=["Python"],
+        missing_required_skills=["PyTorch", "CUDA", "distributed training"],
+        experience_match=MatchSignal.matched,
+        gaps=[f"{gap} is not evidenced." for gap in expected_gaps if gap != omitted_gap],
+        rationale=f"{omitted_gap} is not evidenced in the supplied resume.",
+    )
+
+    evaluation = evaluate_case(case, result)
+
+    assert evaluation["checks"][f"gap_identified:{omitted_gap}"] is False
+    assert all(
+        evaluation["checks"][f"gap_identified:{gap}"]
+        for gap in expected_gaps
+        if gap != omitted_gap
+    )
+    assert evaluation["passed"] is False
+
+
+@pytest.mark.parametrize(
     ("gpu_gap", "expected"),
     [
         ("No documented experience with production GPU training.", True),
         ("Production GPU training experience is missing.", True),
         ("No evidence of production GPU training experience.", True),
+        ("Production GPU training was not documented.", True),
         ("GPU inference optimization experience is missing.", False),
         ("No experience deploying GPU inference pipelines.", False),
         ("The candidate lacks generic ML experience.", False),
+        ("Pre-production GPU training experience is documented.", False),
+        ("Pre-production GPU training experience is missing.", False),
     ],
 )
 def test_gpu_training_gap_matching_accepts_only_narrow_equivalents(
@@ -150,7 +203,9 @@ def test_gpu_training_gap_matching_accepts_only_narrow_equivalents(
         missing_required_skills=["PyTorch", "CUDA", "distributed training"],
         experience_match=MatchSignal.matched,
         gaps=[
-            "PyTorch, CUDA, and distributed training are not evidenced.",
+            "PyTorch is not evidenced.",
+            "CUDA is not evidenced.",
+            "Distributed training is not evidenced.",
             gpu_gap,
         ],
         rationale="The resume supports Python and business reporting only.",
@@ -161,6 +216,105 @@ def test_gpu_training_gap_matching_accepts_only_narrow_equivalents(
     assert evaluation["checks"][
         "gap_identified:production GPU training experience"
     ] is expected
+
+
+def test_one_gap_entry_cannot_satisfy_multiple_mandatory_gap_expectations() -> None:
+    case = next(case for case in load_cases() if case.id == "missing-essential-ml")
+    combined = valid_result(
+        verdict=MatchVerdict.poor_match,
+        matched_skills=["Python"],
+        missing_required_skills=["PyTorch", "CUDA", "distributed training"],
+        experience_match=MatchSignal.matched,
+        gaps=[
+            "PyTorch, CUDA, distributed training, and production GPU training "
+            "experience are not evidenced."
+        ],
+        rationale="The supplied resume supports Python only.",
+    )
+
+    evaluation = evaluate_case(case, combined)
+    gap_checks = [
+        value
+        for key, value in evaluation["checks"].items()
+        if key.startswith("gap_identified:")
+    ]
+
+    assert sum(gap_checks) == 1
+    assert evaluation["passed"] is False
+
+
+@pytest.mark.parametrize(
+    ("gap", "rationale"),
+    [
+        (
+            "Production GPU training experience is supported.",
+            "No evidence of production GPU training experience is supplied.",
+        ),
+        (
+            "Production GPU training experience is not evidenced.",
+            "The resume demonstrates production GPU training experience.",
+        ),
+        (
+            "Production GPU training experience is not evidenced.",
+            "The resume proves production GPU training experience.",
+        ),
+        (
+            "Production GPU training experience is not evidenced.",
+            "The resume demonstrates experience with production GPU training.",
+        ),
+        (
+            "Production GPU training experience is not evidenced.",
+            "Production GPU training experience is supported.",
+        ),
+    ],
+)
+def test_contradictory_gap_or_rationale_cannot_be_rescued(
+    gap: str, rationale: str
+) -> None:
+    case = next(case for case in load_cases() if case.id == "missing-essential-ml")
+    result = valid_result(
+        verdict=MatchVerdict.poor_match,
+        matched_skills=["Python"],
+        missing_required_skills=["PyTorch", "CUDA", "distributed training"],
+        experience_match=MatchSignal.matched,
+        gaps=[
+            "PyTorch is not evidenced.",
+            "CUDA is not evidenced.",
+            "Distributed training is not evidenced.",
+            gap,
+        ],
+        rationale=rationale,
+    )
+
+    evaluation = evaluate_case(case, result)
+
+    assert evaluation["checks"][
+        "gap_identified:production GPU training experience"
+    ] is False
+
+
+def test_positive_gap_entry_cannot_be_rescued_by_another_negative_gap_entry() -> None:
+    case = next(case for case in load_cases() if case.id == "missing-essential-ml")
+    result = valid_result(
+        verdict=MatchVerdict.poor_match,
+        matched_skills=["Python"],
+        missing_required_skills=["PyTorch", "CUDA", "distributed training"],
+        experience_match=MatchSignal.matched,
+        gaps=[
+            "PyTorch is not evidenced.",
+            "CUDA is not evidenced.",
+            "Distributed training is not evidenced.",
+            "Production GPU training experience is supported.",
+            "No evidence of production GPU training experience is supplied.",
+        ],
+        rationale="The resume supports Python only.",
+    )
+
+    evaluation = evaluate_case(case, result)
+
+    assert evaluation["checks"][
+        "gap_identified:production GPU training experience"
+    ] is False
 
 
 def test_gpu_training_gap_alias_does_not_change_unrelated_gap_matching() -> None:
@@ -209,18 +363,49 @@ def test_fixture_rejects_a_missing_scenario(tmp_path) -> None:
 def test_partial_case_requires_required_gap_and_supported_skills() -> None:
     case = next(case for case in load_cases() if case.id == "partial-data-platform")
 
-    passed = evaluate_case(case, valid_result())
+    passed_result = valid_result(
+        strengths=[
+            "Operating services on virtual machines is relevant transferable "
+            "experience for containerized platform operations."
+        ],
+        gaps=["Kubernetes experience is not listed in the resume."],
+    )
+    passed = evaluate_case(case, passed_result)
     assert passed["passed"] is True
     assert passed["checks"]["missing_required:Kubernetes"] is True
+    assert passed["checks"]["transferable_acknowledged:virtual machines"] is True
 
     failed = evaluate_case(
         case,
         valid_result(
             missing_required_skills=[],
             matched_skills=["Python", "SQL", "Kubernetes"],
+            strengths=["The candidate has Kubernetes experience."],
         ),
     )
     assert failed["passed"] is False
+    assert failed["checks"]["not_positive_claimed:Kubernetes"] is False
+
+    no_transfer = evaluate_case(
+        case,
+        passed_result.model_copy(
+            update={"strengths": ["Virtual machine operations are documented."]}
+        ),
+    )
+    assert no_transfer["checks"]["transferable_acknowledged:virtual machines"] is False
+
+    unrelated_cue = evaluate_case(
+        case,
+        passed_result.model_copy(
+            update={
+                "strengths": [
+                    "Virtual machine operations are documented; Kubernetes "
+                    "experience is transferable."
+                ]
+            }
+        ),
+    )
+    assert unrelated_cue["checks"]["transferable_acknowledged:virtual machines"] is False
 
 
 def test_unsupported_qualification_must_not_be_a_positive_claim() -> None:
@@ -373,6 +558,7 @@ def test_preferred_skill_absence_is_not_reported_as_confirmed_inability() -> Non
         rationale="Terraform is not evidenced; the resume does not establish hands-on use.",
     )
     evaluation = evaluate_case(case, result)
+    assert evaluation["passed"] is True
     assert evaluation["checks"]["missing_preferred:Terraform"] is True
     assert evaluation["checks"]["not_evidenced:Terraform"] is True
     assert evaluation["checks"]["not_asserted_absent:Terraform"] is True
@@ -383,6 +569,121 @@ def test_preferred_skill_absence_is_not_reported_as_confirmed_inability() -> Non
     assert evaluate_case(case, wrongly_confirmed)["checks"][
         "not_asserted_absent:Terraform"
     ] is False
+
+    misclassified = evaluate_case(
+        case,
+        result.model_copy(update={"missing_required_skills": ["Terraform"]}),
+    )
+    assert misclassified["checks"]["not_missing_required:Terraform"] is False
+    assert misclassified["passed"] is False
+
+
+@pytest.mark.parametrize(
+    ("required_gap", "expected_not_missing"),
+    [
+        ("Terraform", False),
+        ("Terraform experience", False),
+        ("Terraform-related experience", False),
+        ("Terraformer experience", True),
+        ("IaC platform experience", True),
+    ],
+)
+def test_preferred_exclusion_uses_skill_token_boundaries(
+    required_gap: str, expected_not_missing: bool
+) -> None:
+    case = next(case for case in load_cases() if case.id == "preferred-skill-not-evidenced")
+    result = valid_result(
+        matched_skills=["Python"],
+        missing_required_skills=[required_gap],
+        missing_preferred_skills=["Terraform"],
+        gaps=["Terraform is preferred but not mentioned in the supplied resume."],
+    )
+
+    evaluation = evaluate_case(case, result)
+
+    assert evaluation["checks"]["not_missing_required:Terraform"] is expected_not_missing
+
+
+def test_gpu_inference_is_transferable_but_does_not_satisfy_training_gap() -> None:
+    case = next(case for case in load_cases() if case.id == "gpu-inference-without-training")
+    assert "GPU inference" in case.candidate.resume_content
+    assert "does not describe model training" in case.candidate.resume_content.casefold()
+
+    result = valid_result(
+        matched_skills=["Python", "PyTorch", "CUDA", "GPU inference optimization"],
+        missing_required_skills=[],
+        strengths=[
+            "GPU inference optimization is relevant to this role and provides "
+            "transferable experience for accelerated model systems."
+        ],
+        gaps=["Production GPU training experience is not evidenced."],
+        rationale=(
+            "Production GPU training experience is not evidenced, while GPU "
+            "inference experience is relevant transferable background."
+        ),
+    )
+
+    evaluation = evaluate_case(case, result)
+    assert evaluation["passed"] is True
+    assert evaluation["checks"]["transferable_acknowledged:GPU inference"] is True
+    assert evaluation["checks"]["gap_identified:production GPU training experience"] is True
+    assert evaluation["checks"]["not_positive_claimed:GPU training"] is True
+    assert evaluation["checks"][
+        "not_evidenced:production GPU training experience"
+    ] is True
+
+    no_transfer = evaluate_case(
+        case,
+        result.model_copy(
+            update={
+                "strengths": [
+                    "GPU inference optimization is not relevant to the training requirement."
+                ]
+            }
+        ),
+    )
+    assert no_transfer["checks"]["transferable_acknowledged:GPU inference"] is False
+
+    unrelated_transfer = evaluate_case(
+        case,
+        result.model_copy(
+            update={
+                "strengths": [
+                    "GPU inference is not relevant to training; Kubernetes "
+                    "operations are transferable."
+                ]
+            }
+        ),
+    )
+    assert unrelated_transfer["checks"]["transferable_acknowledged:GPU inference"] is False
+
+    conflated = evaluate_case(
+        case,
+        result.model_copy(
+            update={
+                "strengths": [
+                    "GPU inference optimization is relevant and demonstrates GPU training."
+                ]
+            }
+        ),
+    )
+    assert conflated["checks"]["not_positive_claimed:GPU training"] is False
+
+
+def test_negated_training_contrast_is_not_a_positive_training_claim() -> None:
+    case = next(case for case in load_cases() if case.id == "gpu-inference-without-training")
+    result = valid_result(
+        matched_skills=["Python", "PyTorch", "CUDA", "GPU inference optimization"],
+        missing_required_skills=[],
+        strengths=["GPU inference is relevant, but it is not GPU training."],
+        gaps=["Production GPU training experience is not evidenced."],
+        rationale="Production GPU training is not evidenced in the supplied resume.",
+    )
+
+    evaluation = evaluate_case(case, result)
+
+    assert evaluation["checks"]["not_positive_claimed:GPU training"] is True
+    assert evaluation["checks"]["transferable_acknowledged:GPU inference"] is True
 
 
 def test_total_tenure_does_not_satisfy_explicit_relevant_experience_requirement() -> None:
@@ -445,7 +746,13 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
             gaps=[],
             rationale="All core requirements are evidenced.",
         ),
-        "partial-data-platform": valid_result(score=67),
+        "partial-data-platform": valid_result(
+            score=67,
+            strengths=[
+                "Operating virtual machines is relevant transferable experience "
+                "for containerized services."
+            ],
+        ),
         "missing-essential-ml": valid_result(
             score=39,
             verdict=MatchVerdict.poor_match,
@@ -454,7 +761,9 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
             experience_match=MatchSignal.matched,
             strengths=["Python is supported by the resume."],
             gaps=[
-                "PyTorch, CUDA, and distributed training are not evidenced.",
+                "PyTorch is not evidenced.",
+                "CUDA is not evidenced.",
+                "Distributed training is not evidenced.",
                 "Production GPU training experience is not evidenced.",
             ],
             rationale="Only Python is supported among the central requirements.",
@@ -465,7 +774,11 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
             matched_skills=[],
             missing_required_skills=["Python", "PyTorch", "model deployment"],
             strengths=[],
-            gaps=["Python, PyTorch, and model deployment are not evidenced."],
+            gaps=[
+                "Python is not evidenced.",
+                "PyTorch is not evidenced.",
+                "Model deployment is not evidenced.",
+            ],
             rationale="The supplied experience concerns accounting, not ML infrastructure.",
         ),
         "unsupported-cloud-qualification": valid_result(
@@ -518,6 +831,19 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
             gaps=["No relevant ML platform engineering experience is evidenced."],
             rationale=(
                 "Eight years of accounting tenure are documented, but no relevant ML platform engineering experience is shown."
+            ),
+        ),
+        "gpu-inference-without-training": valid_result(
+            matched_skills=["Python", "PyTorch", "CUDA", "GPU inference optimization"],
+            missing_required_skills=[],
+            strengths=[
+                "GPU inference optimization is relevant to this role and offers "
+                "transferable experience for accelerated model systems."
+            ],
+            gaps=["Production GPU training experience is not evidenced."],
+            rationale=(
+                "Production GPU training experience is not evidenced, while GPU "
+                "inference experience is relevant transferable background."
             ),
         ),
     }
@@ -656,7 +982,7 @@ def test_runner_defaults_to_all_configured_cases(monkeypatch, tmp_path) -> None:
         next(tmp_path.glob("job-matching-*.json")).read_text(encoding="utf-8")
     )
     expected_ids = [case.id for case in load_cases()]
-    assert client.calls == len(expected_ids) == 9
+    assert client.calls == len(expected_ids) == 10
     assert [row["case_id"] for row in artifact["results"]] == expected_ids
 
 
