@@ -141,6 +141,7 @@ class CaseExpectations(BaseModel):
     must_be_missing_required: list[str] = Field(default_factory=list)
     must_be_missing_preferred: list[str] = Field(default_factory=list)
     must_not_be_missing_required: list[str] = Field(default_factory=list)
+    must_not_be_missing_preferred: list[str] = Field(default_factory=list)
     must_be_matched: list[SignalField] = Field(default_factory=list)
     must_be_mismatched: list[SignalField] = Field(default_factory=list)
     must_be_unclear: list[SignalField] = Field(default_factory=list)
@@ -520,6 +521,10 @@ def evaluate_case(
     for skill in expected.must_not_be_missing_required:
         checks[f"not_missing_required:{skill}"] = not any(
             _contains_token_phrase(item, skill) for item in result.missing_required_skills
+        )
+    for skill in expected.must_not_be_missing_preferred:
+        checks[f"not_missing_preferred:{skill}"] = not any(
+            _contains_token_phrase(item, skill) for item in result.missing_preferred_skills
         )
 
     for field in expected.must_be_matched:

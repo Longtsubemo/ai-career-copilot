@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 
-PROMPT_VERSION = "job-matching-v4"
+PROMPT_VERSION = "job-matching-v5"
 
 SYSTEM_INSTRUCTION = """\
 You are a candidate-job matching evaluator. You receive two blocks of
@@ -56,16 +56,36 @@ Rules:
 - Evaluate required skills more heavily than preferred skills. A
   missing required skill is a major gap; a missing preferred skill is
   a minor one.
-- Read the job-analysis categories and wording carefully. Items in
-  "required_skills" are required and items in "preferred_skills" are
-  preferred. Do not assume every item in a generic "qualifications" or
-  "certifications" list is mandatory solely because of its field; treat an
-  item as mandatory only when its wording or explicit job-analysis context
-  says it is required. An item marked preferred or nice-to-have remains
-  preferred. If a listed qualification's status is unclear, preserve that
-  uncertainty; when relevant, name it individually in "gaps" as a
-  qualification whose requirement status or candidate evidence is unclear,
-  without treating it as essential.
+- When "requirement_items" is non-empty, use each item's structured status
+  as the authoritative requirement classification: "required" is explicitly
+  mandatory, "preferred" is desirable but not mandatory, and "unclear" must
+  not be promoted to either required or preferred. Use the item's associated
+  evidence as context, but do not let contradictory legacy arrays override
+  its structured status. For a required structured skill, use
+  "missing_required_skills" when candidate evidence does not establish it;
+  for a preferred structured skill, use "missing_preferred_skills" only when
+  useful; an unclear structured skill belongs in neither missing-skills
+  field. For each unsupported required qualification or certification, add
+  its own specific entry to "gaps". Preferred or unclear qualifications and
+  certifications are not mandatory gaps.
+- In structured mode, legacy skill-array entries not represented by a
+  requirement item retain their legacy status: "required_skills" means
+  required and "preferred_skills" means preferred. If the same legacy-only
+  skill appears in both arrays, treat its status as unclear and put it in
+  neither missing-skills field. For qualifications or certifications not
+  represented by a structured item, a generic legacy-list mention alone does
+  not establish mandatory status; require explicit mandatory wording or
+  context. Do not infer status from a list heading.
+- When "requirement_items" is absent or empty, preserve the v4 legacy
+  behavior: items in "required_skills" are required and items in
+  "preferred_skills" are preferred; generic qualifications and certifications
+  are not mandatory solely because of their field, and their explicit wording
+  or job-analysis context must establish any mandatory status. Preserve
+  uncertainty when status is unclear. Do not assume every item in a generic
+  "qualifications" or "certifications" list is mandatory. An item marked
+  preferred or nice-to-have remains preferred. If a listed qualification's
+  status is unclear, preserve that uncertainty; when relevant, name it
+  individually in "gaps" as unclear without treating it as essential.
 - For each explicitly mandatory qualification that candidate evidence does
   not establish as met, add a separate, specific entry to "gaps" that names
   the qualification. When evidence is silent, say it is not evidenced, not
@@ -155,6 +175,42 @@ def build_matching_prompt(
     lines.append(
         json.dumps(dict(analysis), indent=2, sort_keys=True, ensure_ascii=False)
     )
+    requirement_items = analysis.get("requirement_items")
+    if isinstance(requirement_items, Sequence) and not isinstance(
+        requirement_items, (str, bytes)
+    ) and requirement_items:
+        lines.extend(
+            [
+                "",
+                "REQUIREMENT STATUS POLICY: STRUCTURED ITEMS PRESENT",
+                "Use requirement_items as the authoritative status for each "
+                "represented item. required is mandatory; preferred is "
+                "desirable but not mandatory; unclear remains uncertain and "
+                "must not be placed in either missing-skills list. Evidence is "
+                "context, not permission to override status. Structured status "
+                "overrides contradictory legacy arrays for the same item.",
+                "For legacy-only skills absent from requirement_items, use "
+                "required_skills/preferred_skills as before, except a skill in "
+                "both arrays is unclear and belongs in neither missing list.",
+                "Do not make generic legacy qualifications or certifications "
+                "mandatory unless their own wording or explicit context says "
+                "they are required. Name each unsupported required non-skill "
+                "item separately in gaps.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "REQUIREMENT STATUS POLICY: LEGACY ANALYSIS",
+                "No structured requirement items are available. Use the "
+                "existing v4 behavior. Preserve the v4 legacy behavior: "
+                "required_skills are required, "
+                "preferred_skills are preferred, and a generic qualification "
+                "or certification list does not by itself make an item "
+                "mandatory. Preserve uncertainty when status is not explicit.",
+            ]
+        )
     lines.extend(
         [
             "",

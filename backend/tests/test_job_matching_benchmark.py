@@ -55,11 +55,309 @@ def test_fixture_has_ten_distinct_synthetic_scenarios() -> None:
     assert all("Fictional" in case.job.company_name for case in cases)
 
 
+def test_fixtures_cover_structured_requirement_statuses_and_legacy_fallback() -> None:
+    cases = {case.id: case for case in load_cases()}
+    assert cases["strong-retrieval-engineer"].job.analysis["requirement_items"] == []
+    legacy_conflict = cases["partial-data-platform"].job.analysis
+    assert "Python" in {
+        item["item"] for item in legacy_conflict["requirement_items"]
+    }
+    assert "Terraform" not in {
+        item["item"] for item in legacy_conflict["requirement_items"]
+    }
+    assert "Terraform" in legacy_conflict["required_skills"]
+    assert "Terraform" in legacy_conflict["preferred_skills"]
+
+    required_ml = cases["missing-essential-ml"].job.analysis["requirement_items"]
+    assert any(
+        item["item"] == "PyTorch"
+        and item["category"] == "skill"
+        and item["status"] == "required"
+        for item in required_ml
+    )
+    assert any(
+        item["item"] == "production GPU training experience"
+        and item["category"] == "qualification"
+        and item["status"] == "required"
+        for item in required_ml
+    )
+    assert any(
+        item["item"] == "Terraform" and item["status"] == "preferred"
+        for item in cases["preferred-skill-not-evidenced"].job.analysis[
+            "requirement_items"
+        ]
+    )
+    structured_preference = cases["preferred-skill-not-evidenced"].job.analysis
+    assert "Terraform" in structured_preference["required_skills"]
+    assert "Terraform" in structured_preference["preferred_skills"]
+    reverse_precedence = cases["preferred-skill-not-evidenced"].job.analysis
+    assert "Docker" in reverse_precedence["preferred_skills"]
+    assert any(
+        item["item"] == "Docker"
+        and item["category"] == "skill"
+        and item["status"] == "required"
+        for item in reverse_precedence["requirement_items"]
+    )
+    partial_analysis = cases["partial-data-platform"].job.analysis
+    payroll_qualification = "Experience with enterprise payroll systems"
+    assert payroll_qualification in partial_analysis["qualifications"]
+    assert payroll_qualification not in {
+        item["item"] for item in partial_analysis["requirement_items"]
+    }
+    assert payroll_qualification not in cases["partial-data-platform"].candidate.resume_content
+    unclear_items = cases["missing-education-and-experience-evidence"].job.analysis[
+        "requirement_items"
+    ]
+    assert any(
+        item["item"] == "PMP certification"
+        and item["category"] == "certification"
+        and item["status"] == "unclear"
+        for item in unclear_items
+    )
+    assert "spaCy" in cases["missing-education-and-experience-evidence"].job.analysis[
+        "required_skills"
+    ]
+    assert "spaCy" in cases["missing-education-and-experience-evidence"].job.analysis[
+        "preferred_skills"
+    ]
+    assert any(
+        item["item"] == "Google Professional Machine Learning Engineer certification"
+        and item["status"] == "required"
+        for item in cases["unsupported-cloud-qualification"].job.analysis[
+            "requirement_items"
+        ]
+    )
+    assert any(
+        item["item"] == "AWS Certified Machine Learning Specialty certification"
+        and item["status"] == "required"
+        for item in cases["certification-confirmed-absent"].job.analysis[
+            "requirement_items"
+        ]
+    )
+    gpu_case = cases["gpu-inference-without-training"]
+    assert any(
+        item["item"] == "production GPU training experience"
+        and item["status"] == "required"
+        for item in gpu_case.job.analysis["requirement_items"]
+    )
+    assert "GPU inference" in gpu_case.candidate.resume_content
+
+
 def test_every_preferred_skill_is_excluded_from_required_gap_expectations() -> None:
     for case in load_cases():
         preferred = set(case.job.analysis.get("preferred_skills", []))
-        excluded = set(case.expectations.must_not_be_missing_required)
-        assert preferred <= excluded, case.id
+        structured_status = {
+            item["item"].casefold(): item["status"]
+            for item in case.job.analysis.get("requirement_items", [])
+        }
+        must_not_be_required = set(case.expectations.must_not_be_missing_required)
+        must_be_required = set(case.expectations.must_be_missing_required)
+        must_not_be_preferred = set(case.expectations.must_not_be_missing_preferred)
+        for skill in preferred:
+            if structured_status.get(skill.casefold()) == "required":
+                assert skill in must_be_required, case.id
+                assert skill in must_not_be_preferred, case.id
+            else:
+                assert skill in must_not_be_required, case.id
+
+
+def test_structured_status_expectations_keep_preferred_and_unclear_items_out_of_gaps() -> None:
+    cases = {case.id: case for case in load_cases()}
+    unclear_case = cases["missing-education-and-experience-evidence"]
+    preferred_case = cases["preferred-skill-not-evidenced"]
+    assert set(unclear_case.expectations.must_not_be_missing_required) == {
+        "spaCy",
+        "PMP certification",
+    }
+    assert set(unclear_case.expectations.must_not_be_missing_preferred) == {
+        "spaCy",
+        "PMP certification",
+    }
+    assert preferred_case.expectations.must_not_be_missing_required == ["Terraform"]
+    assert preferred_case.expectations.must_be_missing_preferred == ["Terraform"]
+
+    unclear_result = valid_result(
+        matched_skills=["Python", "Hugging Face Transformers"],
+        missing_required_skills=[],
+        missing_preferred_skills=[],
+        experience_match=MatchSignal.unclear,
+        education_match=MatchSignal.unclear,
+        seniority_match=MatchSignal.unclear,
+        gaps=[
+            "Bachelor's degree or equivalent is not evidenced.",
+            "PMP certification status is unclear; requirement status is not explicit.",
+        ],
+    )
+    preferred_misclassified = valid_result(
+        missing_required_skills=[],
+        missing_preferred_skills=["spaCy"],
+    )
+    incorrectly_required = unclear_result.model_copy(
+        update={"missing_required_skills": ["spaCy", "PMP certification"]}
+    )
+    incorrectly_preferred_certification = unclear_result.model_copy(
+        update={"missing_preferred_skills": ["PMP certification"]}
+    )
+
+    unclear_evaluation = evaluate_case(unclear_case, unclear_result)
+    assert unclear_evaluation["passed"] is True
+    assert unclear_evaluation["checks"]["not_missing_required:spaCy"] is True
+    assert unclear_evaluation["checks"]["not_missing_preferred:spaCy"] is True
+    assert unclear_evaluation["checks"]["not_missing_preferred:PMP certification"] is True
+    assert evaluate_case(unclear_case, preferred_misclassified)["checks"][
+        "not_missing_preferred:spaCy"
+    ] is False
+    required_failure = evaluate_case(unclear_case, incorrectly_required)
+    assert required_failure["checks"][
+        "not_missing_required:spaCy"
+    ] is False
+    assert required_failure["checks"][
+        "not_missing_required:PMP certification"
+    ] is False
+    assert required_failure["passed"] is False
+    preferred_failure = evaluate_case(unclear_case, incorrectly_preferred_certification)
+    assert preferred_failure["checks"][
+        "not_missing_preferred:PMP certification"
+    ] is False
+    assert preferred_failure["passed"] is False
+
+
+def test_legacy_skill_in_both_arrays_is_not_classified_as_missing() -> None:
+    case = next(case for case in load_cases() if case.id == "partial-data-platform")
+    assert "Terraform" in case.job.analysis["required_skills"]
+    assert "Terraform" in case.job.analysis["preferred_skills"]
+    assert "Terraform" not in {
+        item["item"] for item in case.job.analysis["requirement_items"]
+    }
+
+    correctly_unclear = valid_result(
+        missing_required_skills=["Kubernetes"],
+        missing_preferred_skills=[],
+        gaps=["Kubernetes is not evidenced; Terraform's legacy status is unclear."],
+    )
+    incorrectly_missing_both = valid_result(
+        missing_required_skills=["Kubernetes", "Terraform"],
+        missing_preferred_skills=["Terraform"],
+    )
+
+    assert evaluate_case(case, correctly_unclear)["checks"][
+        "not_missing_required:Terraform"
+    ] is True
+    incorrect = evaluate_case(case, incorrectly_missing_both)
+    assert incorrect["checks"]["not_missing_required:Terraform"] is False
+    assert incorrect["checks"]["not_missing_preferred:Terraform"] is False
+
+
+def test_structured_required_skill_overrides_conflicting_legacy_preference() -> None:
+    case = next(case for case in load_cases() if case.id == "preferred-skill-not-evidenced")
+    analysis = case.job.analysis
+    assert "Docker" in analysis["preferred_skills"]
+    assert any(
+        item["item"] == "Docker" and item["status"] == "required"
+        for item in analysis["requirement_items"]
+    )
+    assert "Docker" in case.expectations.must_be_missing_required
+    assert "Docker" in case.expectations.must_not_be_missing_preferred
+
+    correctly_classified = valid_result(
+        matched_skills=["Python"],
+        missing_required_skills=["Docker"],
+        missing_preferred_skills=["Terraform"],
+        gaps=[
+            "Docker is required but not evidenced.",
+            "Terraform is preferred but not evidenced.",
+        ],
+    )
+    evaluation = evaluate_case(case, correctly_classified)
+    assert evaluation["passed"] is True
+    assert evaluation["checks"]["missing_required:Docker"] is True
+    assert evaluation["checks"]["not_missing_preferred:Docker"] is True
+
+    incorrectly_preferred = evaluate_case(
+        case,
+        correctly_classified.model_copy(
+            update={
+                "missing_preferred_skills": ["Terraform", "Docker"],
+            }
+        ),
+    )
+    assert incorrectly_preferred["checks"]["not_missing_preferred:Docker"] is False
+    assert incorrectly_preferred["passed"] is False
+
+    omitted_required = evaluate_case(
+        case,
+        correctly_classified.model_copy(update={"missing_required_skills": []}),
+    )
+    assert omitted_required["checks"]["missing_required:Docker"] is False
+    assert omitted_required["passed"] is False
+
+
+def test_generic_legacy_qualification_is_not_promoted_to_required_gap() -> None:
+    case = next(case for case in load_cases() if case.id == "partial-data-platform")
+    qualification = "Experience with enterprise payroll systems"
+    assert qualification in case.job.analysis["qualifications"]
+    assert qualification not in {
+        item["item"] for item in case.job.analysis["requirement_items"]
+    }
+    assert qualification in case.expectations.must_not_be_missing_required
+
+    correctly_unclassified = valid_result(
+        matched_skills=["Python", "SQL"],
+        missing_required_skills=["Kubernetes"],
+        missing_preferred_skills=[],
+        strengths=[
+            "Experience operating virtual machines is relevant transferable "
+            "experience "
+            "for supporting production data systems."
+        ],
+        gaps=["Kubernetes is not evidenced."],
+    )
+    incorrectly_required = valid_result(
+        missing_required_skills=["Kubernetes", qualification],
+        missing_preferred_skills=[],
+        gaps=["Kubernetes and enterprise payroll systems are missing."],
+    )
+
+    accepted = evaluate_case(case, correctly_unclassified)
+    assert accepted["passed"] is True
+    assert accepted["checks"][
+        f"not_missing_required:{qualification}"
+    ] is True
+    rejected = evaluate_case(case, incorrectly_required)
+    assert rejected["checks"][f"not_missing_required:{qualification}"] is False
+    assert rejected["passed"] is False
+
+
+def test_required_qualification_and_certification_have_individual_gap_expectations() -> None:
+    qualification_case = next(
+        case
+        for case in load_cases()
+        if case.id == "missing-education-and-experience-evidence"
+    )
+    certification_case = next(
+        case for case in load_cases() if case.id == "unsupported-cloud-qualification"
+    )
+    assert qualification_case.expectations.must_identify_gaps == [
+        "Bachelor's degree or equivalent"
+    ]
+    assert certification_case.expectations.must_identify_gaps == [
+        "Google Professional Machine Learning Engineer certification"
+    ]
+
+    qualification_result = valid_result(
+        gaps=["Bachelor's degree or equivalent is not evidenced."],
+    )
+    certification_result = valid_result(
+        gaps=[
+            "Google Professional Machine Learning Engineer certification is not evidenced."
+        ],
+    )
+    assert evaluate_case(qualification_case, qualification_result)["checks"][
+        "gap_identified:Bachelor's degree or equivalent"
+    ] is True
+    assert evaluate_case(certification_case, certification_result)["checks"][
+        "gap_identified:Google Professional Machine Learning Engineer certification"
+    ] is True
 
 
 def test_benchmark_prompts_use_case_job_and_resume_evidence() -> None:
@@ -551,10 +849,13 @@ def test_preferred_skill_absence_is_not_reported_as_confirmed_inability() -> Non
     case = next(case for case in load_cases() if case.id == "preferred-skill-not-evidenced")
     result = valid_result(
         matched_skills=["Python"],
-        missing_required_skills=[],
+        missing_required_skills=["Docker"],
         missing_preferred_skills=["Terraform"],
         strengths=["Python API experience is documented."],
-        gaps=["Terraform is preferred but not mentioned in the supplied resume."],
+        gaps=[
+            "Docker is required but not evidenced.",
+            "Terraform is preferred but not mentioned in the supplied resume.",
+        ],
         rationale="Terraform is not evidenced; the resume does not establish hands-on use.",
     )
     evaluation = evaluate_case(case, result)
@@ -720,6 +1021,7 @@ def test_missing_evidence_case_requires_unclear_signals() -> None:
             experience_match=MatchSignal.unclear,
             education_match=MatchSignal.unclear,
             seniority_match=MatchSignal.unclear,
+            gaps=["Bachelor's degree or equivalent is not evidenced."],
         ),
     )["passed"] is True
     assert evaluate_case(
@@ -799,7 +1101,10 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
             education_match=MatchSignal.unclear,
             seniority_match=MatchSignal.unclear,
             strengths=["Python and Transformers experience is supported."],
-            gaps=["Education and employment dates are not provided."],
+            gaps=[
+                "Education and employment dates are not provided.",
+                "Bachelor's degree or equivalent is not evidenced.",
+            ],
             rationale="Relevant skills are shown; education and experience duration remain unclear.",
         ),
         "certification-confirmed-absent": valid_result(
@@ -817,11 +1122,14 @@ def test_ranking_checks_only_declared_pairwise_constraints() -> None:
         "preferred-skill-not-evidenced": valid_result(
             score=72,
             matched_skills=["Python"],
-            missing_required_skills=[],
+            missing_required_skills=["Docker"],
             missing_preferred_skills=["Terraform"],
             strengths=["Python API experience is documented."],
-            gaps=["Terraform is preferred but not mentioned in the supplied resume."],
-            rationale="Terraform is not evidenced in the supplied resume.",
+            gaps=[
+                "Docker is required but not evidenced.",
+                "Terraform is preferred but not mentioned in the supplied resume.",
+            ],
+            rationale="Docker is required but not evidenced; Terraform is not evidenced in the supplied resume.",
         ),
         "total-years-without-relevant-experience": valid_result(
             score=22,
@@ -947,7 +1255,7 @@ def test_runner_executes_only_requested_cases_in_requested_order(
     assert client.calls == len(selected_ids)
     assert [row["case_id"] for row in artifact["results"]] == selected_ids
     assert artifact["deterministic_evaluation"]["complete"] is True
-    assert artifact["prompt_version"] == PROMPT_VERSION == "job-matching-v4"
+    assert artifact["prompt_version"] == PROMPT_VERSION == "job-matching-v5"
     assert all(row["prompt_version"] == PROMPT_VERSION for row in artifact["results"])
 
 

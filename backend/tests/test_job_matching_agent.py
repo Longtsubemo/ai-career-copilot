@@ -296,6 +296,18 @@ class TestContract:
             != key
         )
 
+    def test_v5_idempotency_scope_is_distinct_from_historical_v4(self) -> None:
+        job_id, candidate_id, resume_id = uuid4(), uuid4(), uuid4()
+        v4_key = job_matching_idempotency_key(
+            job_id, candidate_id, resume_id, "job-matching-v4"
+        )
+        v5_key = job_matching_idempotency_key(
+            job_id, candidate_id, resume_id, PROMPT_VERSION
+        )
+
+        assert PROMPT_VERSION == "job-matching-v5"
+        assert v4_key != v5_key
+
 
 class TestMatchResult:
     def test_result_round_trips_through_json(self) -> None:
@@ -371,8 +383,8 @@ class TestMatchResult:
 
 
 class TestPrompt:
-    def test_prompt_version_is_the_agreed_v4(self) -> None:
-        assert PROMPT_VERSION == "job-matching-v4"
+    def test_prompt_version_is_the_agreed_v5(self) -> None:
+        assert PROMPT_VERSION == "job-matching-v5"
 
     def test_prompt_contains_job_evidence(self) -> None:
         prompt = build_matching_prompt(**PROMPT_ARGS)
@@ -501,6 +513,60 @@ class TestPrompt:
         )
         assert "name it individually in \"gaps\"" in instruction
         assert "without treating it as essential" in instruction
+
+    def test_structured_requirement_policy_is_authoritative_and_category_aware(self) -> None:
+        analysis = {
+            **ANALYSIS_PAYLOAD,
+            "required_skills": ["Python", "Terraform"],
+            "preferred_skills": ["Terraform"],
+            "requirement_items": [
+                {
+                    "item": "Terraform",
+                    "category": "skill",
+                    "status": "preferred",
+                    "evidence": ["Terraform experience is preferred."],
+                },
+                {
+                    "item": "PMP certification",
+                    "category": "certification",
+                    "status": "unclear",
+                    "evidence": ["PMP certification"],
+                },
+                {
+                    "item": "CPA license",
+                    "category": "qualification",
+                    "status": "required",
+                    "evidence": ["CPA license is required."],
+                },
+            ],
+        }
+        prompt = build_matching_prompt(**{**PROMPT_ARGS, "analysis": analysis})
+        normalized = " ".join(prompt.split()).casefold()
+
+        assert '"requirement_items"' in prompt
+        assert "requirement status policy: structured items present" in normalized
+        assert "structured status overrides contradictory legacy arrays" in normalized
+        assert "unclear remains uncertain" in normalized
+        assert "must not be placed in either missing-skills list" in normalized
+        assert "name each unsupported required non-skill item separately in gaps" in normalized
+        assert '"status": "preferred"' in prompt
+        assert '"status": "unclear"' in prompt
+        assert '"status": "required"' in prompt
+
+    @pytest.mark.parametrize("requirement_items", [None, []])
+    def test_absent_or_empty_structured_items_keep_legacy_prompt_mode(
+        self, requirement_items
+    ) -> None:
+        analysis = dict(ANALYSIS_PAYLOAD)
+        if requirement_items is not None:
+            analysis["requirement_items"] = requirement_items
+
+        prompt = build_matching_prompt(**{**PROMPT_ARGS, "analysis": analysis})
+        normalized = " ".join(prompt.split()).casefold()
+
+        assert "requirement status policy: legacy analysis" in normalized
+        assert "preserve the v4 legacy behavior" in normalized
+        assert "structured items present" not in normalized
 
     def test_related_technical_capabilities_are_not_substituted(self) -> None:
         instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()

@@ -12,7 +12,8 @@ Execution order keeps database work away from the Gemini API call:
   content, profile substance);
 * short-circuit on an existing match for the same computation, so repeat
   requests never re-invoke Gemini;
-* select the newest succeeded JobAnalysis — never re-analysing the job;
+* prefer the newest usable job-analysis-v2 payload, then fall back to the
+  newest usable succeeded JobAnalysis for historical compatibility;
 * build the versioned prompt and call Gemini — no database work;
 * validate the structured result (done at the client boundary);
 * persist the match with a single ``ON CONFLICT DO NOTHING`` upsert on
@@ -33,6 +34,9 @@ from sqlalchemy import Row, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.agents.job_analysis.prompt import (
+    PROMPT_VERSION as JOB_ANALYSIS_PROMPT_VERSION,
+)
 from app.agents.job_matching.contract import (
     JOB_MATCHING_AGENT_NAME,
     CandidateNotFoundError,
@@ -291,14 +295,29 @@ def _find_existing_match_row(
 
 
 def _select_succeeded_analysis(session: Session, job_id: UUID) -> JobAnalysis | None:
-    """Return the newest usable succeeded analysis for this job.
+    """Prefer the newest usable v2 analysis, then fall back to latest usable.
 
     Newest means ``created_at`` descending with ``id`` descending as the
     tie-break, so selection is deterministic; pending and failed rows and
-    succeeded rows without a stored payload are ignored. Exactly one
-    analysis version feeds one prompt — versions are never mixed.
+    succeeded rows without a stored payload are ignored. Job Analysis v2
+    carries structured requirement status, so it is preferred when usable.
+    Historical analyses remain usable when no v2 payload exists. Exactly
+    one analysis feeds one prompt — versions are never mixed.
     """
-    stmt = (
+    v2_analysis = session.execute(
+        _succeeded_analysis_query(job_id).where(
+            JobAnalysis.prompt_version == JOB_ANALYSIS_PROMPT_VERSION
+        )
+    ).scalar_one_or_none()
+    if v2_analysis is not None:
+        return v2_analysis
+
+    return session.execute(_succeeded_analysis_query(job_id)).scalar_one_or_none()
+
+
+def _succeeded_analysis_query(job_id: UUID):
+    """Build the stable newest-usable analysis query, optionally versioned."""
+    return (
         select(JobAnalysis)
         .where(
             JobAnalysis.job_id == job_id,
@@ -308,7 +327,6 @@ def _select_succeeded_analysis(session: Session, job_id: UUID) -> JobAnalysis | 
         .order_by(JobAnalysis.created_at.desc(), JobAnalysis.id.desc())
         .limit(1)
     )
-    return session.execute(stmt).scalar_one_or_none()
 
 
 def _profile_is_empty(candidate: Candidate) -> bool:
