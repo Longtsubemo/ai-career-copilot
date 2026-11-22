@@ -1,0 +1,77 @@
+{
+  "nodeExitCode": 0,
+  "nativeApiHost": "localhost",
+  "nativeApiPort": 51838,
+  "apiListenAddresses": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 51838
+    }
+  ],
+  "postgresPort": 63074,
+  "postgresListenAddresses": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 63074
+    }
+  ],
+  "apiListenersOnlyLoopback": true,
+  "postgresListenersOnlyLoopback": true,
+  "uiResult": {
+    "mode": "relaunch",
+    "windowTitle": "AI Career Copilot",
+    "origin": "http://tauri.localhost",
+    "apiUrlHost": "localhost",
+    "apiUrlPort": 51838,
+    "backendReady": true,
+    "dashboard": true,
+    "noAuthenticationUi": true,
+    "routes": [
+      "/jobs",
+      "/applications",
+      "/resume",
+      "/profile"
+    ],
+    "profileEditPersisted": false,
+    "profileRestoredAfterRelaunch": true,
+    "unauthorizedHealthStatus": 401,
+    "unauthorizedHeaders": {
+      "cacheControl": "no-store",
+      "challenge": "Bearer"
+    },
+    "browserStorageKeys": [],
+    "capabilityPersisted": false,
+    "apiResponses": [
+      {
+        "path": "/api/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/applications",
+        "status": 200
+      },
+      {
+        "path": "/api/applications",
+        "status": 200
+      },
+      {
+        "path": "/api/resumes/master/history",
+        "status": 200
+      },
+      {
+        "path": "/api/resumes/master",
+        "status": 404
+      },
+      {
+        "path": "/api/resumes/master/history",
+        "status": 200
+      }
+    ],
+    "frontendErrors": 0,
+    "screenshot": null
+  }
+}

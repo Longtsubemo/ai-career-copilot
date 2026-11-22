@@ -30,6 +30,12 @@ htmlcov/
 
 # Explicitly invoked synthetic Gemini evaluation output
 backend/artifacts/job-matching-evaluations/
+backend/artifacts/packaged-runtime/
+backend/artifacts/desktop/
+backend/artifacts/installers/
+resources/vc-runtime/
+resources/postgresql/
+resources/vc-redist/
 
 # ===========================================
 # Databases (Postgres runs in Docker;

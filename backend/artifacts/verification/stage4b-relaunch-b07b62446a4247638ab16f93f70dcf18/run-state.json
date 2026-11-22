@@ -1,0 +1,15 @@
+{
+  "runId": "b07b62446a4247638ab16f93f70dcf18",
+  "appRoot": "C:\\Users\\longt\\AppData\\Local\\Temp\\aicc-stage4b-cdp-b07b62446a4247638ab16f93f70dcf18\\app",
+  "dataRoot": "C:\\Users\\longt\\AppData\\Local\\Temp\\aicc-stage4b-cdp-b07b62446a4247638ab16f93f70dcf18\\data\\AI Career Copilot",
+  "webviewData": "C:\\Users\\longt\\AppData\\Local\\Temp\\aicc-stage4b-cdp-b07b62446a4247638ab16f93f70dcf18\\webview2-relaunch",
+  "artifacts": "C:\\Users\\longt\\Desktop\\projects\\ai-career-copilot\\backend\\artifacts\\verification\\stage4b-relaunch-b07b62446a4247638ab16f93f70dcf18",
+  "pid": 25360,
+  "debugPort": 53952,
+  "before": {
+    "runtimeConfigSha256": "7e57a61a80bde27685ff1147ab7d584a989de56a488bb065174ab9c7d064b79a",
+    "clusterMarkerSha256": "e586b2e3cdfa4845fa877aff11b9c84588828ef52436f54e1d5dc0d3cd7c4426",
+    "pgVersion": "16",
+    "backupCount": 1
+  }
+}

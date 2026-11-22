@@ -31,4 +31,4 @@ COPY --from=frontend-build /build/frontend/dist/ /app/frontend/dist/
 WORKDIR /app/backend
 USER 10001:10001
 EXPOSE 10000
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 127.0.0.1 --port ${PORT:-10000}"]

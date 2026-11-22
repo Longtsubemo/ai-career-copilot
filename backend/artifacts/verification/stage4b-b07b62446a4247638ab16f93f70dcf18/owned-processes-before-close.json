@@ -1,0 +1,50 @@
+[
+  {
+    "pid": 22064,
+    "parent": 26824,
+    "name": "msedgewebview2.exe",
+    "path": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe"
+  },
+  {
+    "pid": 12184,
+    "parent": 26824,
+    "name": "AI-Career-Copilot-Backend.exe",
+    "path": "C:\\Users\\longt\\AppData\\Local\\Temp\\aicc-stage4b-cdp-b07b62446a4247638ab16f93f70dcf18\\app\\resources\\backend\\AI-Career-Copilot-Backend.exe"
+  },
+  {
+    "pid": 17128,
+    "parent": 22064,
+    "name": "msedgewebview2.exe",
+    "path": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe"
+  },
+  {
+    "pid": 24112,
+    "parent": 22064,
+    "name": "msedgewebview2.exe",
+    "path": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe"
+  },
+  {
+    "pid": 3420,
+    "parent": 22064,
+    "name": "msedgewebview2.exe",
+    "path": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe"
+  },
+  {
+    "pid": 3488,
+    "parent": 22064,
+    "name": "msedgewebview2.exe",
+    "path": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe"
+  },
+  {
+    "pid": 26192,
+    "parent": 22064,
+    "name": "msedgewebview2.exe",
+    "path": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe"
+  },
+  {
+    "pid": 3388,
+    "parent": 12184,
+    "name": "conhost.exe",
+    "path": "C:\\WINDOWS\\system32\\conhost.exe"
+  }
+]
