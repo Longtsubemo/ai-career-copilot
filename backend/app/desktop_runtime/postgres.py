@@ -32,6 +32,8 @@ class PostgresRuntimeError(RuntimeError):
 COMMAND_TIMEOUT_SECONDS = 45
 STARTUP_TIMEOUT_SECONDS = 30
 PORT_ATTEMPTS = 5
+MIGRATION_BACKUPS_KEPT = 5
+MIGRATION_BACKUP_RE = re.compile(r"career-copilot-\d{8}T\d{6}Z-[0-9a-f]{32}\.dump")
 
 
 class ManagedPostgres:
@@ -173,6 +175,7 @@ class ManagedPostgres:
                 except FileExistsError:
                     continue
                 temporary.unlink()
+                self._prune_migration_backups()
                 return backup
             raise PostgresRuntimeError(
                 "database backup could not be published; migrations were not run"
@@ -192,6 +195,20 @@ class ManagedPostgres:
                     "database backup failed; migrations were not run"
                 ) from None
             raise
+
+    def _prune_migration_backups(self) -> None:
+        """Keep the newest app-made dumps; never touch user recovery copies."""
+        # Names start with a UTC timestamp, so name order is age order.
+        dumps = sorted(
+            path
+            for path in self.paths.backup_dir.iterdir()
+            if MIGRATION_BACKUP_RE.fullmatch(path.name)
+        )
+        for old in dumps[:-MIGRATION_BACKUPS_KEPT]:
+            try:
+                old.unlink()
+            except OSError:
+                pass  # A leftover dump only costs disk; it must not block migration.
 
     def _create_new_cluster_state(self) -> None:
         data_dir = self.paths.postgres_data_dir

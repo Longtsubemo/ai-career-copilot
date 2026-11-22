@@ -653,6 +653,40 @@ def test_backup_publication_never_overwrites_an_existing_dump(
     manager.stop()
 
 
+def test_backup_keeps_newest_app_dumps_and_user_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.desktop_runtime.postgres import MIGRATION_BACKUPS_KEPT
+
+    paths = paths_at(tmp_path)
+    monkeypatch.setattr(ApplicationPaths, "_secure_directory", staticmethod(lambda _: None))
+    tools = FakePgTools(paths.postgres_data_dir)
+    manager = ManagedPostgres(
+        paths,
+        create_fake_binaries(tmp_path / "postgres-bin"),
+        run=tools,
+        connect=FakeConnector(paths.postgres_data_dir),
+    )
+    manager.start()
+    old_dumps = [
+        paths.backup_dir / f"career-copilot-2020010{day}T000000Z-{'a' * 32}.dump"
+        for day in range(1, 8)
+    ]
+    for dump in old_dumps:
+        dump.write_bytes(b"old")
+    user_copy = paths.backup_dir / "my-recovery-copy.dump"
+    user_copy.write_bytes(b"mine")
+
+    created_backup = manager.create_backup()
+
+    remaining = sorted(p for p in paths.backup_dir.iterdir() if p != user_copy)
+    assert len(remaining) == MIGRATION_BACKUPS_KEPT
+    assert created_backup in remaining
+    assert remaining[:-1] == old_dumps[-(MIGRATION_BACKUPS_KEPT - 1):]
+    assert user_copy.read_bytes() == b"mine"
+    manager.stop()
+
+
 def test_interrupted_cluster_initialization_is_never_promoted_to_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

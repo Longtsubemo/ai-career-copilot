@@ -193,7 +193,9 @@ The six reviewed executables (`initdb.exe`, `pg_ctl.exe`, `postgres.exe`,
 `psql.exe`, `pg_dump.exe`, and `pg_restore.exe`) report PostgreSQL 16.16 and
 are x64/AMD64. The current runtime's `_validate_binaries` requires
 `initdb.exe`, `pg_ctl.exe`, `postgres.exe`, `pg_dump.exe`, and `pg_restore.exe`.
-It invokes `pg_dump` for a pre-migration backup; it does not currently invoke
+It invokes `pg_dump` for a pre-migration backup and keeps the five newest
+`career-copilot-<UTC timestamp>-<hex>.dump` files; other files in the backup
+folder are never removed. It does not currently invoke
 `psql` or `pg_restore`. `psql` is useful as a packaged support tool, while
 `pg_restore` is a required binary check and the natural utility for restoring
 the runtime's custom-format dumps. No Alembic migration or application model
