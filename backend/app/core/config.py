@@ -1,11 +1,17 @@
 from functools import lru_cache
+import json
+import os
 from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+
+from app.desktop_runtime.webview import ALLOWED_DESKTOP_CORS_ORIGINS
 
 DEFAULT_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+SUPPORTED_BROWSER_ORIGINS = frozenset(DEFAULT_CORS_ORIGINS) | ALLOWED_DESKTOP_CORS_ORIGINS
 
 
 class Settings(BaseSettings):
@@ -14,6 +20,7 @@ class Settings(BaseSettings):
     app_name: str = "AI Career Copilot API"
     app_version: str = "0.1.0"
     environment: str = "development"
+    runtime_mode: Literal["development", "desktop"] = "development"
     debug: bool = False
     log_level: str = "INFO"
     search_provider: Literal["searxng", "firecrawl"] = Field(
@@ -53,12 +60,12 @@ class Settings(BaseSettings):
             "A value of 0 disables the per-job cooldown."
         ),
     )
-    discovery_daily_user_limit: int = Field(
+    discovery_daily_local_limit: int = Field(
         default=100,
         ge=1,
         le=10_000,
         description=(
-            "Daily provider-backed operations allowed per authenticated user: "
+            "Daily provider-backed operations allowed by this local installation: "
             "one unit per discovery run or job-verification attempt."
         ),
     )
@@ -67,7 +74,7 @@ class Settings(BaseSettings):
         ge=1,
         le=100_000,
         description=(
-            "Shared daily provider-backed operation ceiling across users; "
+            "Daily provider-backed operation ceiling for this installation; "
             "one unit per discovery run or job-verification attempt."
         ),
     )
@@ -94,31 +101,10 @@ class Settings(BaseSettings):
             "explicitly. JSON list when supplied as an environment variable."
         ),
     )
-    session_cookie_name: str = Field(
-        default="career_copilot_session",
-        description="Name of the HttpOnly session cookie.",
+    frontend_dist_dir: str | None = Field(
+        default=None,
+        description="Optional static frontend directory for a managed desktop runtime.",
     )
-    csrf_cookie_name: str = Field(
-        default="career_copilot_csrf",
-        description="Name of the readable CSRF token cookie.",
-    )
-    session_ttl_seconds: int = Field(
-        default=7 * 24 * 60 * 60,
-        ge=60,
-        description="Absolute lifetime of a login session, in seconds.",
-    )
-    session_cookie_secure: bool = Field(
-        default=False,
-        description=(
-            "Set the Secure flag on auth cookies. Must be true behind HTTPS "
-            "in production; false so local http development works."
-        ),
-    )
-    session_cookie_samesite: str = Field(
-        default="lax",
-        description="SameSite policy for auth cookies (lax, strict or none).",
-    )
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -127,9 +113,26 @@ class Settings(BaseSettings):
         hide_input_in_errors=True,
     )
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        if os.environ.get("CAREER_COPILOT_RUNTIME_MODE", "").casefold() == "desktop":
+            return (init_settings,)
+        return (init_settings, env_settings, dotenv_settings, file_secret_settings)
+
     @model_validator(mode="after")
     def validate_production_configuration(self) -> "Settings":
         """Reject unsafe hosted settings without echoing secret values."""
+        if any(origin not in SUPPORTED_BROWSER_ORIGINS for origin in self.cors_origins):
+            raise ValueError(
+                "CAREER_COPILOT_CORS_ORIGINS may contain only the supported local development origins"
+            )
         if self.search_provider == "firecrawl" and not (
             self.firecrawl_api_key and self.firecrawl_api_key.strip()
         ):
@@ -144,18 +147,13 @@ class Settings(BaseSettings):
         # process resumes or spend the free provider allowance by default.
         if "enable_resume_ai" not in self.model_fields_set:
             self.enable_resume_ai = False
-        if "discovery_daily_user_limit" not in self.model_fields_set:
-            self.discovery_daily_user_limit = 3
+        if "discovery_daily_local_limit" not in self.model_fields_set:
+            self.discovery_daily_local_limit = 3
         if "discovery_daily_global_limit" not in self.model_fields_set:
             self.discovery_daily_global_limit = 20
 
         if self.debug:
             raise ValueError("CAREER_COPILOT_DEBUG must be false in production")
-        if not self.session_cookie_secure:
-            raise ValueError(
-                "CAREER_COPILOT_SESSION_COOKIE_SECURE must be true in production"
-            )
-
         if self.search_provider == "firecrawl":
             if "firecrawl_base_url" not in self.model_fields_set:
                 raise ValueError(
@@ -207,7 +205,7 @@ class Settings(BaseSettings):
         if "cors_origins" not in self.model_fields_set:
             self.cors_origins = []
         else:
-            local_hosts = {"localhost", "127.0.0.1", "::1"}
+            local_hosts = {"localhost", "127.0.0.1", "::1", "tauri.localhost"}
             for origin in self.cors_origins:
                 try:
                     parsed_origin = urlsplit(origin)
@@ -264,4 +262,47 @@ def _has_valid_url_port(parsed) -> bool:
 
 @lru_cache
 def get_settings() -> Settings:
+    if os.environ.get("CAREER_COPILOT_RUNTIME_MODE", "").casefold() == "desktop":
+        config_path = os.environ.get("CAREER_COPILOT_DESKTOP_CONFIG")
+        if not config_path or not os.path.isabs(config_path):
+            raise RuntimeError("desktop runtime configuration is unavailable")
+        try:
+            with open(config_path, encoding="utf-8") as config_file:
+                values = json.load(config_file)
+        except (OSError, json.JSONDecodeError):
+            raise RuntimeError("desktop runtime configuration is unavailable") from None
+        if not isinstance(values, dict) or values.get("runtime_mode") != "desktop":
+            raise RuntimeError("desktop runtime configuration is invalid")
+        if not isinstance(values.get("database_url"), str):
+            raise RuntimeError("desktop database configuration is unavailable")
+        try:
+            database_url = make_url(values["database_url"])
+        except Exception:
+            raise RuntimeError("desktop database configuration is invalid") from None
+        if (
+            database_url.drivername != "postgresql+psycopg"
+            or database_url.host != "127.0.0.1"
+            or database_url.port is None
+            or not 1 <= database_url.port <= 65_535
+            or database_url.username != "career_copilot_app"
+            or database_url.database != "career_copilot"
+            or not database_url.password
+            or database_url.query
+            or not _valid_desktop_cors_origins(values.get("cors_origins"))
+            or values.get("debug", False) is not False
+        ):
+            raise RuntimeError("desktop runtime configuration is invalid")
+        try:
+            return Settings(_env_file=None, **values)
+        except ValidationError:
+            raise RuntimeError("desktop runtime configuration is invalid") from None
     return Settings()
+
+
+def _valid_desktop_cors_origins(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and all(isinstance(origin, str) for origin in value)
+        and len(value) == len(set(value))
+        and set(value).issubset(ALLOWED_DESKTOP_CORS_ORIGINS)
+    )

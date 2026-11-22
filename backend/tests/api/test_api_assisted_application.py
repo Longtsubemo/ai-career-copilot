@@ -10,7 +10,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 
 from app.models.application import Application
-from tests.api.support import LETTER, build_full_world, login
+from tests.api.support import LETTER, build_full_world
 from tests.fake_clients import FakeGeminiClient
 
 
@@ -23,8 +23,6 @@ def test_generating_a_cover_letter_does_not_track_the_job(
 ):
     world = build_full_world(session)
     client = client_factory(gemini=FakeGeminiClient(LETTER))
-    login(client, world.candidate.user)
-
     response = client.post(f"/api/jobs/{world.job.id}/cover-letter")
 
     assert response.status_code == 200
@@ -34,8 +32,6 @@ def test_generating_a_cover_letter_does_not_track_the_job(
 def test_reading_a_job_records_nothing(client_factory, session):
     world = build_full_world(session)
     client = client_factory(gemini=FakeGeminiClient(LETTER))
-    login(client, world.candidate.user)
-
     assert client.get(f"/api/jobs/{world.job.id}").status_code == 200
     assert client.get("/api/jobs").status_code == 200
 
@@ -47,8 +43,6 @@ def test_tracking_after_preparing_materials_is_still_a_draft(
 ):
     world = build_full_world(session)
     client = client_factory(gemini=FakeGeminiClient(LETTER))
-    login(client, world.candidate.user)
-
     assert client.post(f"/api/jobs/{world.job.id}/cover-letter").status_code == 200
     tracked = client.post(
         "/api/applications", json={"job_id": str(world.job.id)}
@@ -63,8 +57,6 @@ def test_tracking_after_preparing_materials_is_still_a_draft(
 def test_marking_applied_is_an_explicit_separate_step(client_factory, session):
     world = build_full_world(session)
     client = client_factory(gemini=FakeGeminiClient(LETTER))
-    login(client, world.candidate.user)
-
     client.post(f"/api/jobs/{world.job.id}/cover-letter")
     tracked = client.post(
         "/api/applications", json={"job_id": str(world.job.id)}

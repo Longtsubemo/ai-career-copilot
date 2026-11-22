@@ -1,8 +1,8 @@
 """Application tracking endpoints: explicit records, never side effects.
 
-Every route is scoped to the authenticated account's candidate: the owner is
-resolved from the session, never from the request body, and a row belonging to
-another account answers exactly like an unknown id.
+Every route is scoped to the selected local profile: its ID is resolved on
+the server, never from the request body, and a row belonging to another
+preserved profile answers exactly like an unknown ID.
 """
 
 from __future__ import annotations

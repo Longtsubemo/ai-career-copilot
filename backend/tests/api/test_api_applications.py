@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from app.models.application import Application
-from tests.api.support import register
+from tests.api.support import initialize_local_profile
 from tests.factories import make_company, make_job
 
 
@@ -20,17 +20,20 @@ def _candidate_id(client) -> str:
     return client.get("/api/candidates/me").json()["id"]
 
 
-def test_applications_require_authentication(client):
-    assert client.get("/api/applications").status_code == 401
-    assert client.post("/api/applications", json={}).status_code == 401
-    assert client.get(f"/api/applications/{uuid4()}").status_code == 401
+def test_application_routes_work_without_a_login(client):
+    assert client.get("/api/applications").status_code == 200
+    assert client.post("/api/applications", json={}).status_code == 201
+    assert client.get(f"/api/applications/{uuid4()}").status_code == 404
     assert (
-        client.patch(f"/api/applications/{uuid4()}", json={}).status_code == 401
+        client.patch(
+            f"/api/applications/{uuid4()}", json={"notes": "updated"}
+        ).status_code
+        == 404
     )
 
 
 def test_create_application_without_a_job(client, session):
-    register(client)
+    initialize_local_profile(client)
     candidate_id = _candidate_id(client)
 
     response = client.post("/api/applications", json={"notes": "first draft"})
@@ -49,7 +52,7 @@ def test_create_application_without_a_job(client, session):
 
 
 def test_create_application_snapshots_the_job(client, session):
-    register(client)
+    initialize_local_profile(client)
     job = _seed_job(session)
 
     response = client.post(
@@ -70,7 +73,7 @@ def test_create_application_snapshots_the_job(client, session):
 
 
 def test_create_application_with_unknown_job_is_404(client):
-    register(client)
+    initialize_local_profile(client)
 
     response = client.post("/api/applications", json={"job_id": str(uuid4())})
 
@@ -79,7 +82,7 @@ def test_create_application_with_unknown_job_is_404(client):
 
 
 def test_create_application_cannot_choose_an_owner(client, session):
-    register(client)
+    initialize_local_profile(client)
 
     response = client.post(
         "/api/applications",
@@ -94,7 +97,7 @@ def test_create_application_cannot_choose_an_owner(client, session):
 
 
 def test_invalid_status_is_rejected(client):
-    register(client)
+    initialize_local_profile(client)
 
     response = client.post(
         "/api/applications", json={"status": "not-a-status"}
@@ -104,7 +107,7 @@ def test_invalid_status_is_rejected(client):
 
 
 def test_list_and_filter_applications(client, session):
-    register(client)
+    initialize_local_profile(client)
     job = _seed_job(session)
     client.post("/api/applications", json={"job_id": str(job.id)})
     client.post("/api/applications", json={"status": "rejected"})
@@ -131,7 +134,7 @@ def test_list_and_filter_applications(client, session):
 
 
 def test_read_one_application(client, session):
-    register(client)
+    initialize_local_profile(client)
     job = _seed_job(session)
     created = client.post(
         "/api/applications", json={"job_id": str(job.id)}
@@ -144,7 +147,7 @@ def test_read_one_application(client, session):
 
 
 def test_read_unknown_application_is_404(client):
-    register(client)
+    initialize_local_profile(client)
 
     response = client.get(f"/api/applications/{uuid4()}")
 
@@ -152,7 +155,7 @@ def test_read_unknown_application_is_404(client):
 
 
 def test_partial_update_changes_only_the_sent_fields(client, session):
-    register(client)
+    initialize_local_profile(client)
     created = client.post(
         "/api/applications", json={"notes": "draft notes"}
     ).json()
@@ -174,7 +177,7 @@ def test_partial_update_changes_only_the_sent_fields(client, session):
 
 
 def test_update_rejects_an_empty_body(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={}).json()
 
     response = client.patch(f"/api/applications/{created['id']}", json={})
@@ -183,7 +186,7 @@ def test_update_rejects_an_empty_body(client):
 
 
 def test_update_rejects_a_null_status(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={}).json()
 
     response = client.patch(
@@ -194,7 +197,7 @@ def test_update_rejects_a_null_status(client):
 
 
 def test_update_rejects_unknown_fields(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={}).json()
 
     response = client.patch(
@@ -205,7 +208,7 @@ def test_update_rejects_unknown_fields(client):
 
 
 def test_update_unknown_application_is_404(client):
-    register(client)
+    initialize_local_profile(client)
 
     response = client.patch(
         f"/api/applications/{uuid4()}", json={"status": "applied"}
@@ -215,7 +218,7 @@ def test_update_unknown_application_is_404(client):
 
 
 def test_creating_a_draft_leaves_applied_at_null(client):
-    register(client)
+    initialize_local_profile(client)
 
     created = client.post("/api/applications", json={}).json()
 
@@ -224,7 +227,7 @@ def test_creating_a_draft_leaves_applied_at_null(client):
 
 
 def test_creating_with_applied_status_records_a_server_timestamp(client):
-    register(client)
+    initialize_local_profile(client)
 
     created = client.post("/api/applications", json={"status": "applied"}).json()
 
@@ -233,7 +236,7 @@ def test_creating_with_applied_status_records_a_server_timestamp(client):
 
 
 def test_client_cannot_supply_applied_at_on_create(client):
-    register(client)
+    initialize_local_profile(client)
 
     response = client.post(
         "/api/applications",
@@ -244,7 +247,7 @@ def test_client_cannot_supply_applied_at_on_create(client):
 
 
 def test_client_cannot_supply_applied_at_on_update(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={}).json()
 
     response = client.patch(
@@ -256,7 +259,7 @@ def test_client_cannot_supply_applied_at_on_update(client):
 
 
 def test_transition_to_applied_stamps_applied_at(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={}).json()
     assert created["applied_at"] is None
 
@@ -269,7 +272,7 @@ def test_transition_to_applied_stamps_applied_at(client):
 
 
 def test_notes_edit_after_applying_preserves_applied_at(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={"status": "applied"}).json()
 
     updated = client.patch(
@@ -282,7 +285,7 @@ def test_notes_edit_after_applying_preserves_applied_at(client):
 
 
 def test_repeating_the_applied_status_preserves_applied_at(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={"status": "applied"}).json()
 
     updated = client.patch(
@@ -293,7 +296,7 @@ def test_repeating_the_applied_status_preserves_applied_at(client):
 
 
 def test_leaving_applied_preserves_the_submission_time(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={"status": "applied"}).json()
 
     updated = client.patch(
@@ -305,7 +308,7 @@ def test_leaving_applied_preserves_the_submission_time(client):
 
 
 def test_advancing_without_applying_keeps_applied_at_null(client):
-    register(client)
+    initialize_local_profile(client)
     created = client.post("/api/applications", json={}).json()
 
     updated = client.patch(
@@ -316,7 +319,7 @@ def test_advancing_without_applying_keeps_applied_at_null(client):
 
 
 def test_partial_update_preserves_job_snapshot_and_applied_at(client, session):
-    register(client)
+    initialize_local_profile(client)
     job = _seed_job(session)
     created = client.post(
         "/api/applications",
@@ -336,7 +339,7 @@ def test_partial_update_preserves_job_snapshot_and_applied_at(client, session):
 
 
 def test_tracking_a_job_twice_creates_one_application(client, session):
-    register(client)
+    initialize_local_profile(client)
     job = _seed_job(session)
 
     first = client.post("/api/applications", json={"job_id": str(job.id)})
@@ -356,7 +359,7 @@ def test_tracking_a_job_twice_creates_one_application(client, session):
 
 
 def test_tracking_again_never_regresses_an_applied_record(client, session):
-    register(client)
+    initialize_local_profile(client)
     job = _seed_job(session)
     created = client.post("/api/applications", json={"job_id": str(job.id)}).json()
     applied = client.patch(

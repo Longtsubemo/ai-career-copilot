@@ -17,15 +17,12 @@ from tests.api.support import (
     build_candidate,
     build_candidate_with_resume,
     build_job,
-    login,
 )
-from tests.factories import make_user
 from tests.fake_clients import FakeGeminiClient
 
 
 def _as_candidate(client_factory, world, gemini):
     client = client_factory(gemini=gemini)
-    login(client, world.candidate.user)
     return client
 
 
@@ -133,15 +130,13 @@ def test_match_without_a_job_analysis_is_409(client_factory, session):
     assert gemini.calls == []
 
 
-def test_match_without_a_candidate_is_404(client_factory, session):
+def test_first_launch_initializes_a_profile_before_matching(client_factory, session):
     job_world = build_job(session)
     client = client_factory(gemini=FakeGeminiClient(MATCH))
-    login(client, make_user(session))
-
     response = client.post(f"/api/jobs/{job_world.job.id}/match")
 
-    assert response.status_code == 404
-    assert "POST /api/candidates" in response.json()["detail"]
+    assert response.status_code == 409
+    assert client.get("/api/candidates/me").status_code == 200
     assert session.scalar(select(func.count()).select_from(AgentRun)) == 0
 
 
@@ -149,8 +144,6 @@ def test_match_without_a_master_resume_is_409(client_factory, session):
     job_world = build_job(session)
     candidate = build_candidate(session)
     client = client_factory(gemini=FakeGeminiClient(MATCH))
-    login(client, candidate.user)
-
     response = client.post(f"/api/jobs/{job_world.job.id}/match")
 
     assert response.status_code == 409
@@ -161,8 +154,6 @@ def test_match_without_a_master_resume_is_409(client_factory, session):
 def test_explicit_unknown_ids_are_404(client_factory, session):
     world = _world(session)
     client = client_factory(gemini=FakeGeminiClient(MATCH))
-    login(client, world.candidate.user)
-
     unknown_candidate = client.post(
         f"/api/jobs/{world.job.id}/match", json={"candidate_id": str(uuid4())}
     )
@@ -181,8 +172,6 @@ def test_explicit_unknown_ids_are_404(client_factory, session):
 def test_nil_uuid_is_rejected_as_422(client_factory, session):
     world = _world(session)
     client = client_factory(gemini=FakeGeminiClient(MATCH))
-    login(client, world.candidate.user)
-
     response = client.post(
         f"/api/jobs/{world.job.id}/match",
         json={"candidate_id": "00000000-0000-0000-0000-000000000000"},

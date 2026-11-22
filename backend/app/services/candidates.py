@@ -1,21 +1,17 @@
-"""Deterministic lifecycle of candidate profiles.
-
-Every candidate profile belongs to exactly one account. The API never picks
-"the" candidate: it resolves the one owned by the authenticated user, so two
-accounts can never see each other's profile. Creating a profile is guarded to
-one per user — the unique ``user_id`` is the database backstop.
-"""
+"""Lifecycle of the single profile used by the local application."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.models.candidate import Candidate
 
+LOCAL_CANDIDATE_ID = UUID("00000000-0000-4000-8000-000000000001")
 EDITABLE_FIELDS = frozenset(
     {
         "name",
@@ -29,55 +25,75 @@ EDITABLE_FIELDS = frozenset(
 )
 
 
-class DuplicateCandidateError(LookupError):
-    """The account already owns a candidate profile."""
+class LocalProfileSelectionRequired(LookupError):
+    """An upgrade retained multiple profiles and needs an explicit choice."""
 
 
-def candidate_for_user(session: Session, user_id: UUID) -> Candidate | None:
-    """Return the profile owned by ``user_id``, or None.
+def get_local_candidate(
+    session: Session, *, create_if_missing: bool = True
+) -> tuple[Candidate | None, bool]:
+    """Return the selected local profile, promoting or creating only safely.
 
-    Looked up by the owner column rather than by creation order, so a second
-    account's profile is never returned for the first.
+    The Boolean result says whether this call changed the database. The caller
+    owns committing that initialization. A database with multiple unselected
+    profiles is never resolved by creation order or by merging data.
     """
-    stmt = select(Candidate).where(Candidate.user_id == user_id)
-    return session.execute(stmt).scalar_one_or_none()
+    candidate = session.execute(
+        select(Candidate).where(Candidate.is_local_profile.is_(True))
+    ).scalar_one_or_none()
+    if candidate is not None:
+        return candidate, False
 
-
-def create_candidate(
-    session: Session,
-    *,
-    user_id: UUID,
-    name: str,
-    headline: str | None = None,
-    location: str | None = None,
-    years_of_experience: float | None = None,
-    seniority: str | None = None,
-    skills: list[str] | None = None,
-    summary: str | None = None,
-) -> Candidate:
-    """Create the profile owned by ``user_id``, or fail when one exists.
-
-    One profile per user keeps "the current candidate" unambiguous. The
-    caller owns the transaction.
-    """
-    existing = candidate_for_user(session, user_id)
-    if existing is not None:
-        raise DuplicateCandidateError(
-            f"account {user_id} already owns a candidate profile (id {existing.id})"
+    count = session.scalar(select(func.count()).select_from(Candidate)) or 0
+    if count > 1:
+        raise LocalProfileSelectionRequired(
+            "Several candidate profiles were preserved during the upgrade. "
+            "Choose the profile to use with "
+            "`python -m app.cli.select_local_profile --list`, then "
+            "`python -m app.cli.select_local_profile --candidate-id <ID>`. "
+            "This keeps every profile and its related data without merging or deleting it."
         )
-    candidate = Candidate(
-        user_id=user_id,
-        name=name,
-        headline=headline,
-        location=location,
-        years_of_experience=years_of_experience,
-        seniority=seniority,
-        skills=skills,
-        summary=summary,
+    if count == 1:
+        candidate = session.execute(select(Candidate)).scalar_one()
+        candidate.is_local_profile = True
+        session.flush()
+        return candidate, True
+    if not create_if_missing:
+        return None, False
+
+    session.execute(
+        insert(Candidate)
+        .values(
+            id=LOCAL_CANDIDATE_ID,
+            name="",
+            is_local_profile=True,
+        )
+        .on_conflict_do_nothing(
+            index_elements=[Candidate.is_local_profile],
+            index_where=Candidate.is_local_profile.is_(True),
+        )
     )
-    session.add(candidate)
+    candidate = session.execute(
+        select(Candidate).where(Candidate.is_local_profile.is_(True))
+    ).scalar_one_or_none()
+    if candidate is None:
+        raise RuntimeError("the local profile could not be initialized")
+    return candidate, candidate.id == LOCAL_CANDIDATE_ID
+
+
+def select_local_candidate(session: Session, candidate_id: UUID) -> Candidate:
+    """Explicitly choose a preserved profile without moving or deleting data."""
+    candidate = session.get(Candidate, candidate_id)
+    if candidate is None:
+        raise LookupError(f"candidate profile {candidate_id} does not exist")
+    session.execute(
+        update(Candidate)
+        .where(Candidate.id != candidate_id)
+        .values(is_local_profile=False)
+        .execution_options(synchronize_session=False)
+    )
+    candidate.is_local_profile = True
     session.flush()
-    session.refresh(candidate)
     return candidate
 
 
@@ -87,13 +103,7 @@ def update_candidate(
     *,
     updates: Mapping[str, object],
 ) -> Candidate:
-    """Apply partial, whitelisted edits to ``candidate`` and flush.
-
-    Only user-editable profile fields are written; identity and ownership
-    columns (``id``, ``user_id``) are not in the whitelist and a key outside
-    it is ignored, so a caller cannot overwrite ownership. Fields absent
-    from ``updates`` are left untouched. The caller owns the transaction.
-    """
+    """Apply whitelisted profile edits and flush; the caller commits."""
     for field, value in updates.items():
         if field in EDITABLE_FIELDS:
             setattr(candidate, field, value)

@@ -21,62 +21,31 @@ from app.models.enums import DocumentKind, RunStatus
 from app.models.job_analysis import JobAnalysis
 from app.models.match import Match
 from tests.factories import (
-    TEST_PASSWORD,
     make_candidate,
     make_company,
     make_document,
     make_job,
-    make_user,
 )
 
 RESUME_TEXT = "EXPERIENCE evidence: built agent pipelines in python."
 
-SESSION_COOKIE = "career_copilot_session"
-CSRF_COOKIE = "career_copilot_csrf"
-CSRF_HEADER = "X-CSRF-Token"
-
-
-def _arm_csrf(client) -> None:
-    """Mirror the readable CSRF cookie into the header unsafe calls need."""
-    token = client.cookies.get(CSRF_COOKIE)
-    if token:
-        client.headers[CSRF_HEADER] = token
-
-
-def login(client, user, password: str = TEST_PASSWORD):
-    """Log an existing account in and arm the client's CSRF header."""
-    response = client.post(
-        "/api/auth/login", json={"email": user.email, "password": password}
-    )
+def initialize_local_profile(client, *, name: str | None = None):
+    """Exercise first-launch profile creation through the ordinary API."""
+    response = client.get("/api/candidates/me")
     assert response.status_code == 200, response.text
-    _arm_csrf(client)
-    return response
+    profile = response.json()
+    if name and profile["name"] != name:
+        response = client.patch("/api/candidates/me", json={"name": name})
+        assert response.status_code == 200, response.text
+        profile = response.json()
+    return profile
 
 
-def register(
-    client,
-    *,
-    email: str = "ada.lovelace@example.com",
-    password: str = "password123",
-    name: str = "Ada Lovelace",
-):
-    """Register an account (which creates its candidate) and arm CSRF."""
-    response = client.post(
-        "/api/auth/register",
-        json={"email": email, "password": password, "name": name},
-    )
-    assert response.status_code == 201, response.text
-    _arm_csrf(client)
-    return response.json()
-
-
-def make_user_client(client_factory, session, *, user=None, **overrides):
-    """Return an authenticated client and the account it is signed in as."""
-    if user is None:
-        user = make_user(session, **overrides)
+def make_local_client(client_factory, session=None, **_ignored):
+    """Return an API client with its local profile initialized."""
     client = client_factory()
-    login(client, user)
-    return client, user
+    profile = initialize_local_profile(client)
+    return client, profile
 
 ANALYSIS_PAYLOAD: dict[str, object] = {
     "summary": "Backend role building agentic systems.",
@@ -237,19 +206,15 @@ def build_full_world(session: Session) -> SimpleNamespace:
 __all__ = [
     "ANALYSIS_PAYLOAD",
     "ANALYSIS_RESULT",
-    "CSRF_COOKIE",
-    "CSRF_HEADER",
     "LETTER",
     "MATCH",
     "RESUME_TEXT",
-    "SESSION_COOKIE",
     "add_analysis",
     "add_match",
     "build_candidate",
     "build_candidate_with_resume",
     "build_full_world",
     "build_job",
-    "login",
-    "make_user_client",
-    "register",
+    "initialize_local_profile",
+    "make_local_client",
 ]

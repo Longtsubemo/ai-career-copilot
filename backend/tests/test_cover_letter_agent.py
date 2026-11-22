@@ -1017,7 +1017,7 @@ class TestGenerationWithDatabase:
         fake = FakeGeminiClient(GeminiError("quota exceeded"))
         agent = CoverLetterAgent(fake)
 
-        with pytest.raises(GeminiError, match="quota exceeded"):
+        with pytest.raises(GeminiError, match="Gemini request failed"):
             agent.generate(
                 session,
                 job_id=world.job.id,
@@ -1034,7 +1034,7 @@ class TestGenerationWithDatabase:
         api = RecordingGeminiApi(parsed=None, text='{"confidence": 0.5}')
         agent = CoverLetterAgent(GeminiClient("gemini-3.8-flash", api=api))
 
-        with pytest.raises(GeminiError, match="does not match the expected schema"):
+        with pytest.raises(GeminiError, match="Gemini returned unusable structured output"):
             agent.generate(
                 session,
                 job_id=world.job.id,
@@ -1054,7 +1054,7 @@ class TestGenerationWithDatabase:
         api = RecordingGeminiApi(parsed=None, text=json.dumps(payload))
         agent = CoverLetterAgent(GeminiClient("gemini-3.8-flash", api=api))
 
-        with pytest.raises(GeminiError, match="does not match the expected schema"):
+        with pytest.raises(GeminiError, match="Gemini returned unusable structured output"):
             agent.generate(
                 session,
                 job_id=world.job.id,

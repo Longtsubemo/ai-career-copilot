@@ -1056,7 +1056,7 @@ class TestAnalysisWithDatabase:
         fake = FakeGeminiClient(GeminiError("quota exceeded"))
         agent = JobAnalysisAgent(fake)
 
-        with pytest.raises(GeminiError, match="quota exceeded"):
+        with pytest.raises(GeminiError, match="Gemini request failed"):
             agent.analyze(session, job.id)
 
         assert analysis_count(session) == 0
@@ -1068,7 +1068,7 @@ class TestAnalysisWithDatabase:
         api = RecordingGeminiApi(parsed=None, text='{"unexpected": true}')
         agent = JobAnalysisAgent(GeminiClient("gemini-3.8-flash", api=api))
 
-        with pytest.raises(GeminiError, match="does not match the expected schema"):
+        with pytest.raises(GeminiError, match="Gemini returned unusable structured output"):
             agent.analyze(session, job.id)
 
         assert len(api.calls) == 1

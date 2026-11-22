@@ -1258,7 +1258,7 @@ class TestMatchingWithDatabase:
         fake = FakeGeminiClient(GeminiError("quota exceeded"))
         agent = JobMatchingAgent(fake)
 
-        with pytest.raises(GeminiError, match="quota exceeded"):
+        with pytest.raises(GeminiError, match="Gemini request failed"):
             agent.match(
                 session,
                 job_id=world.job.id,
@@ -1274,7 +1274,7 @@ class TestMatchingWithDatabase:
         api = RecordingGeminiApi(parsed=None, text=json.dumps(payload))
         agent = JobMatchingAgent(GeminiClient("gemini-3.8-flash", api=api))
 
-        with pytest.raises(GeminiError, match="does not match the expected schema"):
+        with pytest.raises(GeminiError, match="Gemini returned unusable structured output"):
             agent.match(
                 session,
                 job_id=world.job.id,
@@ -1291,7 +1291,7 @@ class TestMatchingWithDatabase:
         api = RecordingGeminiApi(parsed=None, text='{"score": 50}')
         agent = JobMatchingAgent(GeminiClient("gemini-3.8-flash", api=api))
 
-        with pytest.raises(GeminiError, match="does not match the expected schema"):
+        with pytest.raises(GeminiError, match="Gemini returned unusable structured output"):
             agent.match(
                 session,
                 job_id=world.job.id,

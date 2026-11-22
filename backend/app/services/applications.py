@@ -140,7 +140,7 @@ def create_application(
 ) -> Application:
     """Create one application record owned by ``candidate_id``.
 
-    The caller resolves the candidate from the authenticated session, so a
+    The caller resolves the candidate from the selected local profile, so a
     client can never choose the owner. When a job is referenced it must exist,
     and its title and company name are copied onto the application so the
     record outlives the job row.

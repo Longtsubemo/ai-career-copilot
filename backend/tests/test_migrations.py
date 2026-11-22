@@ -38,8 +38,6 @@ EXPECTED_TABLES = {
     "job_analyses",
     "jobs",
     "matches",
-    "sessions",
-    "users",
 }
 
 EXPECTED_CHECK_CONSTRAINTS = {
@@ -153,15 +151,39 @@ def test_migrated_partial_unique_indexes_exist(migrated_engine: Engine) -> None:
     assert "uq_job_analyses_job_prompt_succeeded" in analysis_indexes
 
 
-def test_migrations_round_trip_down_and_back_up(migrated_database_url: str) -> None:
+def test_fresh_migration_is_idempotent(migrated_database_url: str) -> None:
     config = build_alembic_config(migrated_database_url)
-    command.downgrade(config, "base")
+    command.upgrade(config, "head")
     command.upgrade(config, "head")
 
     engine = create_engine(migrated_database_url, poolclass=NullPool)
     try:
         inspector = inspect(engine)
         assert EXPECTED_TABLES <= set(inspector.get_table_names())
+        assert not {"users", "sessions"} & set(inspector.get_table_names())
+        candidate_columns = {
+            column["name"] for column in inspector.get_columns("candidates")
+        }
+        assert "is_local_profile" in candidate_columns
+        assert "user_id" not in candidate_columns
+    finally:
+        engine.dispose()
+
+
+def test_auth_data_migration_refuses_an_unrecoverable_downgrade(
+    migrated_database_url: str,
+) -> None:
+    with pytest.raises(RuntimeError, match="Restore the pre-upgrade database backup"):
+        command.downgrade(
+            build_alembic_config(migrated_database_url), "20261016_0008"
+        )
+
+    engine = create_engine(migrated_database_url, poolclass=NullPool)
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "20261115_0009"
     finally:
         engine.dispose()
 
@@ -237,12 +259,13 @@ def seeded_database_url(database_url: str) -> Iterator[str]:
                 ),
                 {"id": user_id},
             )
+            candidate_id = uuid4()
             connection.execute(
                 text(
                     "INSERT INTO candidates (id, name, user_id, created_at, updated_at) "
                     "VALUES (:id, 'Seed Owner', :user_id, now(), now())"
                 ),
-                {"id": uuid4(), "user_id": user_id},
+                {"id": candidate_id, "user_id": user_id},
             )
     finally:
         engine.dispose()
@@ -301,8 +324,16 @@ def test_upgrade_from_previous_revision_backfills_existing_rows(seeded_database_
             assert application.job_title_snapshot is None
             assert application.created_at is not None
             owner = connection.execute(
-                text("SELECT id FROM candidates")
-            ).scalar_one()
-            assert application.candidate_id == owner
+                text("SELECT id, is_local_profile FROM candidates")
+            ).one()
+            assert application.candidate_id == owner.id
+            assert owner.is_local_profile is True
+            assert connection.execute(
+                text("SELECT name FROM candidates WHERE id = :id"),
+                {"id": owner.id},
+            ).scalar_one() == "Seed Owner"
+            assert connection.execute(
+                text("SELECT to_regclass('public.users'), to_regclass('public.sessions')")
+            ).one() == (None, None)
     finally:
         engine.dispose()

@@ -9,12 +9,11 @@ from app.db.base import Base
 
 
 class DiscoveryDailyUsage(Base):
-    """Atomic per-day counters for authenticated provider-backed operations.
+    """Atomic per-day counters for local provider-backed operations.
 
-    Each discovery run or job-verification attempt reserves one unit.
-    ``scope_key`` is either ``global`` or an authenticated user's UUID
-    prefixed with ``user:``. Rows for earlier UTC days are pruned when a new
-    operation is reserved; no request identity or forwarded IP is stored.
+    The local installation and shared global scopes each reserve one unit per
+    discovery run or job-verification attempt. Earlier UTC days are pruned
+    when a new operation is reserved.
     """
 
     __tablename__ = "discovery_daily_usage"

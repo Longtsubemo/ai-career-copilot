@@ -1,8 +1,7 @@
 """Job listing, lookup and explicit re-verification over postings.
 
-Reading is shared and unauthenticated; re-verification is a state-changing
-user action (it updates the shared job row after crawling its source URL), so
-it requires an authenticated session and is limited by a shared daily
+Reading is shared; re-verification is a local user action (it updates the
+shared job row after crawling its source URL), so it is limited by a daily
 provider-operation quota plus a per-job cooldown.
 """
 
@@ -14,14 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.agents.runtime.runtime import utc_now
-from app.api.deps import get_current_user, get_firecrawl
+from app.api.deps import get_firecrawl
 from app.api.schemas import JobListOut, JobOut, JobVerificationOut
 from app.clients.firecrawl import FirecrawlClient
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.enums import AvailabilityStatus
 from app.models.job import Job
-from app.models.user import User
 from app.services import jobs as jobs_service
 from app.services.discovery_quota import (
     DailyProviderLimitExceeded,
@@ -108,7 +106,6 @@ def read_job(job_id: UUID, session: Session = Depends(get_db)) -> JobOut:
 def verify_job(
     job_id: UUID,
     session: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
     firecrawl: FirecrawlClient = Depends(get_firecrawl),
 ) -> JobVerificationOut:
     """Re-check one saved job against its own source URL.
@@ -127,8 +124,7 @@ def verify_job(
     try:
         reserve_provider_attempt(
             session,
-            user_id=user.id,
-            user_limit=settings.discovery_daily_user_limit,
+            local_limit=settings.discovery_daily_local_limit,
             global_limit=settings.discovery_daily_global_limit,
         )
     except DailyProviderLimitExceeded:
@@ -137,7 +133,7 @@ def verify_job(
         ) from None
     # Make the reservation durable before the verification service can call
     # Firecrawl. Failed crawls and cooldown-rejected verification attempts
-    # remain counted as authenticated verification attempts.
+    # remain counted as local verification attempts.
     session.commit()
     result = verify_job_availability(
         session,

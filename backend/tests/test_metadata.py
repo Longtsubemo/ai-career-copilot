@@ -24,8 +24,6 @@ EXPECTED_TABLES = {
     "job_analyses",
     "jobs",
     "matches",
-    "sessions",
-    "users",
 }
 
 

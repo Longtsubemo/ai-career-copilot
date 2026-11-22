@@ -35,11 +35,16 @@ def make_client(
     firecrawl: object | None = None,
     gemini: object | None = None,
     raise_server_exceptions: bool = True,
+    base_url: str = "http://localhost",
 ) -> TestClient:
     """Build a TestClient whose app uses the test session and any fakes."""
     app = create_app(searxng=searxng, firecrawl=firecrawl, gemini=gemini)
     app.dependency_overrides[get_db] = _session_override(session)
-    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
+    return TestClient(
+        app,
+        base_url=base_url,
+        raise_server_exceptions=raise_server_exceptions,
+    )
 
 
 @pytest.fixture
