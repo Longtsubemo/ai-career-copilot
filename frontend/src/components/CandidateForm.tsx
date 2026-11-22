@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import type { ApiError } from "../api/errors";
-import type { Candidate, CandidateCreateRequest } from "../types/api";
+import type { Candidate, CandidateUpdateRequest } from "../types/api";
 import { ErrorAlert } from "./ui/ErrorAlert";
 import { Button } from "./ui/Button";
 import { Field, TextArea, TextInput } from "./ui/Field";
@@ -26,7 +26,7 @@ export function CandidateForm({
   initial = null,
   submitLabel = "Create profile",
 }: {
-  onSubmit: (payload: CandidateCreateRequest) => void;
+  onSubmit: (payload: CandidateUpdateRequest) => void;
   submitting: boolean;
   error?: ApiError | null;
   initial?: Candidate | null;

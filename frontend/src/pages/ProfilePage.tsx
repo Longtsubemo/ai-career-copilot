@@ -7,7 +7,7 @@ import { Card, CardBody, CardHeader } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
 import { useAsync } from "../hooks/useAsync";
 import { useCandidate } from "../hooks/useCandidate";
-import type { CandidateCreateRequest } from "../types/api";
+import type { CandidateUpdateRequest } from "../types/api";
 import { formatDate } from "../utils/format";
 import { isProfileIncomplete } from "../utils/profile";
 
@@ -26,7 +26,7 @@ export function ProfilePage() {
   const { candidate, updateProfile } = useCandidate();
   const [editing, setEditing] = useState(false);
   const { run, pending, error } = useAsync(
-    (payload: CandidateCreateRequest) => updateProfile(payload),
+    (payload: CandidateUpdateRequest) => updateProfile(payload),
     { onSuccess: () => setEditing(false) },
   );
 

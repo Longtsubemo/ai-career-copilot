@@ -1,22 +1,5 @@
 export type UUID = string;
 
-export interface User {
-  id: UUID;
-  email: string;
-  created_at: string;
-}
-
-export interface RegisterRequest {
-  email: string;
-  password: string;
-  name?: string | null;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
 export interface Candidate {
   id: UUID;
   name: string;
@@ -28,16 +11,6 @@ export interface Candidate {
   summary: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface CandidateCreateRequest {
-  name: string;
-  headline?: string | null;
-  location?: string | null;
-  years_of_experience?: number | null;
-  seniority?: string | null;
-  skills?: string[] | null;
-  summary?: string | null;
 }
 
 export interface CandidateUpdateRequest {
