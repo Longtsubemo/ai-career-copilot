@@ -12,7 +12,8 @@ permissions:
 jobs:
   verify:
     name: Backend, frontend, and container checks
-    runs-on: ubuntu-latest
+    # Pinned: setup-python has no 3.13.7 build for Ubuntu 26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
