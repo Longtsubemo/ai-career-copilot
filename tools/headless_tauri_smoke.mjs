@@ -1,16 +1,23 @@
 // Headless checks for an isolated packaged Tauri app through its local WebView2 CDP endpoint.
-// Usage: node tools/headless_tauri_smoke.mjs <port> <mode> [screenshot-path]
+// Usage: node tools/headless_tauri_smoke.mjs <port> fresh <screenshot-path>
+//        node tools/headless_tauri_smoke.mjs <port> relaunch
+//        node tools/headless_tauri_smoke.mjs <port> close <app-pid>
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
 const port = Number(process.argv[2]);
 const mode = process.argv[3];
 const screenshotPath = process.argv[4];
+const appPid = Number(process.argv[4]);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error("Pass the WebView2 remote-debugging port.");
 }
 if (!["fresh", "relaunch", "close"].includes(mode)) {
   throw new Error("Mode must be fresh, relaunch, or close.");
+}
+if (mode === "close" && (!Number.isInteger(appPid) || appPid < 1)) {
+  throw new Error("Close mode requires the desktop app process ID.");
 }
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -119,13 +126,36 @@ async function main() {
   if (initial.origin !== "http://tauri.localhost") {
     throw new Error(`Unexpected packaged WebView origin: ${initial.origin}`);
   }
-  const status = await evaluate("window.__TAURI_INTERNALS__.invoke('backend_status')");
   if (mode === "close") {
-    await evaluate("window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'main' })");
-    console.log(JSON.stringify({ mode, closeRequested: true, backendPhase: status?.phase ?? "unknown" }));
+    const status = await evaluate("window.__TAURI_INTERNALS__.invoke('backend_status')");
     socket.close();
+    // The app grants no window-close IPC, so close it like the title-bar X button.
+    // Exit 2: the PID is not the desktop app; exit 3: it has no window to close.
+    execFileSync("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$p = Get-Process -Id ${appPid} -ErrorAction Stop; ` +
+        "if ($p.Path -notlike '*\\ai-career-copilot-desktop.exe') { exit 2 }; " +
+        "if (-not $p.CloseMainWindow()) { exit 3 }",
+    ]);
+    // The runtime allows the backend 120 s to stop PostgreSQL gracefully.
+    await waitFor(() => {
+      try {
+        process.kill(appPid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    }, "desktop app exit", 150_000);
+    console.log(JSON.stringify({ mode, closed: true, backendPhase: status?.phase ?? "unknown" }));
     return;
   }
+  // First launch initializes PostgreSQL, so wait for a settled phase.
+  const status = await waitFor(async () => {
+    const current = await evaluate("window.__TAURI_INTERNALS__.invoke('backend_status')");
+    return ["ready", "failed"].includes(current?.phase) ? current : null;
+  }, "backend ready or failed", 180_000);
   if (status?.phase !== "ready" || !/^http:\/\/(?:localhost|127\.0\.0\.1):\d+$/.test(status.api_url ?? "")) {
     throw new Error(`Local backend did not become ready (phase=${status?.phase ?? "unknown"}; message=${status?.message ?? "none"}).`);
   }
