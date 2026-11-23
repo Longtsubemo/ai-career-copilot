@@ -12,7 +12,7 @@ Execution order keeps database work away from the Gemini API call:
   content, profile substance);
 * short-circuit on an existing match for the same computation, so repeat
   requests never re-invoke Gemini;
-* prefer the newest usable job-analysis-v2 payload, then fall back to the
+* prefer the newest usable current-version analysis payload, then fall back to the
   newest usable succeeded JobAnalysis for historical compatibility;
 * build the versioned prompt and call Gemini — no database work;
 * validate the structured result (done at the client boundary);

@@ -26,7 +26,7 @@ def test_analyze_runs_and_persists(client_factory, session):
     assert body["job_id"] == str(world.job.id)
     assert body["output"] == {
         "job_id": str(world.job.id),
-        "prompt_version": "job-analysis-v2",
+        "prompt_version": "job-analysis-v3",
         "model": "gemini-3.8-flash",
         "analysis": ANALYSIS_PAYLOAD,
     }
@@ -36,7 +36,7 @@ def test_analyze_runs_and_persists(client_factory, session):
     row = session.execute(select(JobAnalysis)).scalars().one()
     assert row.status.value == "succeeded"
     assert row.job_id == world.job.id
-    assert row.prompt_version == "job-analysis-v2"
+    assert row.prompt_version == "job-analysis-v3"
 
 
 def test_repeated_analyze_reuses_run_and_analysis(client_factory, session):

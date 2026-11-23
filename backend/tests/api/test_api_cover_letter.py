@@ -36,7 +36,7 @@ def test_generate_a_cover_letter(client_factory, session):
     assert output["candidate_id"] == str(world.candidate.id)
     assert output["master_resume_document_id"] == str(world.resume.id)
     assert output["match_id"] == str(world.match.id)
-    assert output["prompt_version"] == "cover-letter-v1"
+    assert output["prompt_version"] == "cover-letter-v2"
     assert output["model"] == "gemini-3.8-flash"
     assert output["cover_letter"] == {
         "content": LETTER.content,
@@ -53,7 +53,7 @@ def test_generate_a_cover_letter(client_factory, session):
     assert letter.source_document_id == world.resume.id
     assert letter.agent_run_id == UUID(body["id"])
     assert letter.model == "gemini-3.8-flash"
-    assert letter.prompt_version == "cover-letter-v1"
+    assert letter.prompt_version == "cover-letter-v2"
 
 
 def test_cover_letter_is_disabled_without_gemini_or_document_write(

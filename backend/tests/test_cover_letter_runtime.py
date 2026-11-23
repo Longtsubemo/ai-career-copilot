@@ -419,12 +419,12 @@ def test_new_prompt_version_creates_a_second_run_and_letter(
         session,
         registry=build_registry(
             FakeGeminiClient(LETTER_V2, model="gemini-other"),
-            prompt_version="cover-letter-v2",
+            prompt_version="cover-letter-v3",
         ),
     )
     v2_run = v2_runtime.create_run(
         agent_name=COVER_LETTER_AGENT_NAME,
-        idempotency_key=letter_key(world, "cover-letter-v2"),
+        idempotency_key=letter_key(world, "cover-letter-v3"),
         input=letter_payload(world),
     )
     finished_v2 = v2_runtime.run_next(agent_name=COVER_LETTER_AGENT_NAME)
@@ -432,18 +432,18 @@ def test_new_prompt_version_creates_a_second_run_and_letter(
     assert finished_v2 is not None and finished_v2.status == RunStatus.succeeded
     assert v2_run.id != v1_run.id
     assert finished_v2.output is not None
-    assert finished_v2.output["prompt_version"] == "cover-letter-v2"
+    assert finished_v2.output["prompt_version"] == "cover-letter-v3"
     assert letter_count(session) == 2
 
     rows = session.scalars(
         select(Document).where(Document.kind == DocumentKind.cover_letter)
     ).all()
     by_version = {row.prompt_version: row for row in rows}
-    assert set(by_version) == {PROMPT_VERSION, "cover-letter-v2"}
+    assert set(by_version) == {PROMPT_VERSION, "cover-letter-v3"}
     assert by_version[PROMPT_VERSION].content == LETTER.content
     assert by_version[PROMPT_VERSION].source_document_id == world.resume.id
-    assert by_version["cover-letter-v2"].content == LETTER_V2.content
-    assert by_version["cover-letter-v2"].source_document_id == world.resume.id
+    assert by_version["cover-letter-v3"].content == LETTER_V2.content
+    assert by_version["cover-letter-v3"].source_document_id == world.resume.id
 
 
 def test_each_app_gets_its_own_registry_with_all_four_agents() -> None:

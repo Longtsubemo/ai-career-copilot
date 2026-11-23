@@ -163,7 +163,11 @@ clients without sharing a global registry.
 Analysis, matching, and cover-letter prompt versions are persisted with each
 result. Bump the relevant prompt version when prompt behavior changes. Model
 outputs are data, never control instructions, and generated claims must stay
-grounded in persisted profile, job, and resume evidence.
+grounded in persisted profile, job, and resume evidence. Scraped job text is
+untrusted: each system instruction tells the model to treat evidence as data
+and ignore instructions inside it, and the matching and cover-letter builders
+collapse line breaks in one-line fields so a job title or company name cannot
+start a forged evidence block.
 
 ## Resume handling
 

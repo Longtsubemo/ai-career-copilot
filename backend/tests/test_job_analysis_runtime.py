@@ -248,12 +248,12 @@ def test_new_prompt_version_creates_a_second_run_and_analysis_row(
     register_job_analysis_handler(
         next_registry,
         gemini=FakeGeminiClient(ANALYSIS),
-        prompt_version="job-analysis-v3",
+        prompt_version="job-analysis-v4",
     )
     next_runtime = AgentRuntime(session, registry=next_registry)
     next_run = next_runtime.create_run(
         agent_name=JOB_ANALYSIS_AGENT_NAME,
-        idempotency_key=job_analysis_idempotency_key(job.id, "job-analysis-v3"),
+        idempotency_key=job_analysis_idempotency_key(job.id, "job-analysis-v4"),
         input={"job_id": str(job.id)},
     )
     finished_next = next_runtime.run_next(agent_name=JOB_ANALYSIS_AGENT_NAME)
@@ -261,7 +261,7 @@ def test_new_prompt_version_creates_a_second_run_and_analysis_row(
     assert finished_next is not None and finished_next.status == RunStatus.succeeded
     assert next_run.id != v1_run.id
     assert finished_next.output is not None
-    assert finished_next.output["prompt_version"] == "job-analysis-v3"
+    assert finished_next.output["prompt_version"] == "job-analysis-v4"
     assert finished_next.output["analysis"] == ANALYSIS.model_dump(mode="json")
 
     versions = set(
@@ -269,7 +269,7 @@ def test_new_prompt_version_creates_a_second_run_and_analysis_row(
             select(JobAnalysis.prompt_version).where(JobAnalysis.job_id == job.id)
         ).all()
     )
-    assert versions == {PROMPT_VERSION, "job-analysis-v3"}
+    assert versions == {PROMPT_VERSION, "job-analysis-v4"}
 
 
 def test_each_app_gets_its_own_registry_with_all_agents_registered() -> None:
