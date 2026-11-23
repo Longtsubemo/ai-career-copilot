@@ -100,6 +100,7 @@ def test_managed_postgres_requires_absolute_binary_directory(tmp_path: Path) -> 
         ManagedPostgres(paths_at(tmp_path), Path("relative-postgres-bin"))
 
 
+@pytest.mark.skipif(os.name != "nt", reason="uses Windows LOCALAPPDATA paths")
 def test_default_data_directory_uses_local_app_data() -> None:
     from app.desktop_runtime.paths import default_data_directory
 
@@ -512,6 +513,7 @@ def test_explicit_postgres_bin_override_stays_outside_persistent_data(
     assert paths_at(tmp_path).postgres_data_dir != binary_dir.parent
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the bundled PostgreSQL runtime is Windows-only")
 def test_incompatible_bundled_minor_version_is_rejected_before_cluster_creation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -538,7 +540,7 @@ def test_missing_postgres_restore_tool_fails_before_cluster_creation(
     paths = paths_at(tmp_path)
     monkeypatch.setattr(ApplicationPaths, "_secure_directory", staticmethod(lambda _: None))
     binary_dir = create_fake_binaries(tmp_path / "bundle" / "bin")
-    (binary_dir / "pg_restore.exe").unlink()
+    (binary_dir / ("pg_restore" + (".exe" if os.name == "nt" else ""))).unlink()
     manager = ManagedPostgres(
         paths,
         binary_dir,

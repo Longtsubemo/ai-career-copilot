@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -19,11 +21,15 @@ TAURI_LOCAL_ORIGIN = "http://tauri.localhost"
 
 
 def _desktop_settings(origins: list[str] | None = None) -> Settings:
+    # Desktop mode requires a frontend build; CI runs backend tests before building it.
+    frontend_dist = Path(tempfile.mkdtemp())
+    (frontend_dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
     return Settings(
         _env_file=None,
         runtime_mode="desktop",
         environment="desktop",
         cors_origins=origins or [],
+        frontend_dist_dir=str(frontend_dist),
     )
 
 
