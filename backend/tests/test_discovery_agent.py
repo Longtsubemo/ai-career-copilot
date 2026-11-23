@@ -199,6 +199,8 @@ class TestContract:
             ("7 plus years", (7, 99)),
             ("2 years", (2, 2)),
             ("4 yrs", (4, 4)),
+            ("Graduates of 2024-2025 welcome", None),
+            ("Class of 2025, 2-4 years preferred", (2, 4)),
             ("senior", None),
             ("", None),
             (None, None),
