@@ -167,13 +167,31 @@ the NSIS maintenance/reinstall flow if the app is already installed.
 The path checks, pre-migration backup behavior, and process identity checks
 are implemented in the desktop runtime and NSIS hook. The packaged Tauri
 runtime was exercised directly with a separate synthetic data directory, and
-the synthetic profile survived a clean app close and relaunch. The NSIS
-fresh-install, upgrade, repair, uninstall, and reinstall flows were not run:
-this installer is per-machine and requests administrator execution, this host
-already has the product registered under Program Files, and its installed
-Visual C++ runtime is older than the installer prerequisite. There is no
-available disposable Windows VM or Sandbox on this host. The installer lifecycle
-results and safe-test blocker are recorded in [the Stage 4B report](STAGE4B_VERIFICATION.md).
+the synthetic profile survived a clean app close and relaunch. The original
+Stage 4B lifecycle blockers are recorded in [the Stage 4B report](STAGE4B_VERIFICATION.md).
+
+A later silent-mode lifecycle run on the development host (Windows 11 Home, the
+pinned Visual C++ runtime already present, no prior data directory) used a
+Stage 4B installer built before the uninstall-hook fix:
+
+- Silent install (`/S`, administrator approval) registered the app, created
+  Start Menu and desktop shortcuts, and removed the Redistributable after setup.
+- First launch initialized PostgreSQL and passed `tools/headless_tauri_smoke.mjs`
+  in `fresh` mode. Closing the window stopped the app, backend and PostgreSQL
+  cleanly; a relaunch restored the synthetic profile.
+- Uninstall aborted with "did not close cleanly" on every attempt. NSIS is
+  32-bit, so the pre-uninstall hook ran 32-bit PowerShell, whose default
+  execution policy (`Restricted`) blocked `close_running_app.ps1`. The hook now
+  passes `-ExecutionPolicy Bypass` for that one process. With a per-process
+  bypass the old build uninstalled correctly: registration, program files and
+  shortcuts were removed, and the data directory and Visual C++ runtime were kept.
+- Uninstalling a copy installed from an earlier, differently laid-out build left
+  that build's files under Program Files; the uninstaller removes only files it
+  installed.
+
+Still unverified: an installer rebuilt with the hook fix, the interactive
+wizard, upgrade, repair and reinstall over existing data, and any clean Windows
+machine.
 
 ## Licenses and distribution review
 
