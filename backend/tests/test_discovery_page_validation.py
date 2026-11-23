@@ -546,3 +546,86 @@ def test_successful_page_recrawl_upsert_uses_validated_page_fields() -> None:
     assert "description = coalesce" in compiled
     assert plans[0].extracted.title == "Page AI Engineer"
     assert plans[0].extracted.description == SUBSTANTIVE_DESCRIPTION
+
+
+def test_description_keeps_language_names_and_prose_symbols() -> None:
+    crawl = crawl_result(
+        URL,
+        markdown=(
+            "# Senior C# Developer\n\n"
+            "## Responsibilities\n"
+            "* Build **backend** services in C# and F# on .NET 8 using snake_case APIs.\n"
+            "- Salary <50k for juniors; candidates with >3 years get a bonus.\n"
+            + SUBSTANTIVE_DESCRIPTION
+        ),
+    )
+
+    description = extract_page_evidence(crawl).description
+
+    assert "C# and F#" in description
+    assert "snake_case" in description
+    assert "Salary <50k for juniors; candidates with >3 years" in description
+    assert "**" not in description and "* Build" not in description
+
+
+def test_html_tags_are_still_removed_from_structured_descriptions() -> None:
+    crawl = crawl_result(
+        URL,
+        metadata={
+            "@type": "JobPosting",
+            "title": "AI Engineer",
+            "description": "<p>Build <strong>AI</strong> systems</p><!-- note -->",
+        },
+    )
+
+    assert extract_page_evidence(crawl).description == "Build AI systems"
+
+
+def test_a_page_with_several_distinct_job_postings_is_a_listing() -> None:
+    def posting(title: str) -> dict[str, object]:
+        return {"@type": "JobPosting", "title": title, "description": SUBSTANTIVE_DESCRIPTION}
+
+    crawl = crawl_result(
+        URL,
+        markdown="# Engineering at Acme\n\n" + SUBSTANTIVE_DESCRIPTION,
+        metadata={
+            "jsonLd": {
+                "@type": "ItemList",
+                "itemListElement": [posting("AI Engineer"), posting("Data Engineer")],
+            }
+        },
+    )
+
+    validation = validate_page_evidence(crawl, extract_page_evidence(crawl))
+
+    assert not validation.accepted
+    assert validation.failure is PageEvidenceFailure.listing
+
+
+def test_a_repeated_copy_of_the_same_posting_is_still_one_vacancy() -> None:
+    posting = {"@type": "JobPosting", "title": "AI Engineer", "description": SUBSTANTIVE_DESCRIPTION}
+    crawl = crawl_result(URL, metadata={**posting, "jsonLd": dict(posting)})
+
+    validation = validate_page_evidence(crawl, extract_page_evidence(crawl))
+
+    assert validation.accepted
+
+
+def test_field_lines_stay_in_the_description_and_bare_type_needs_a_value() -> None:
+    crawl = crawl_result(
+        URL,
+        markdown=(
+            "# AI Engineer\n\n"
+            "Experience: 5+ years building distributed systems with Go and Kubernetes\n"
+            "Type: you enjoy pairing and code review\n"
+            + SUBSTANTIVE_DESCRIPTION
+        ),
+    )
+
+    evidence = extract_page_evidence(crawl)
+
+    assert "Go and Kubernetes" in evidence.description
+    assert evidence.experience_level.startswith("5+ years")
+    assert evidence.employment_type is None
+    typed = crawl_result(URL, markdown="# AI Engineer\n\nType: Full-time\n" + SUBSTANTIVE_DESCRIPTION)
+    assert extract_page_evidence(typed).employment_type == "Full-time"

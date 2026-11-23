@@ -69,8 +69,11 @@ _LINE_FIELDS: dict[str, re.Pattern[str]] = {
         r"^\s*(?:location|job location|based in)\s*[:\-–]\s*(.+)$",
         re.IGNORECASE | re.MULTILINE,
     ),
+    # A bare "Type:" label counts only when an employment value follows it.
     "employment_type": re.compile(
-        r"^\s*(?:employment type|job type|type)\s*[:\-–]\s*(.+)$",
+        r"^\s*(?:(?:employment|job|contract|work)\s+type|type(?=\s*[:\-–]\s*"
+        r"(?:full|part|contract|intern|temporary|permanent|freelance|casual|seasonal)))"
+        r"\s*[:\-–]\s*(.+)$",
         re.IGNORECASE | re.MULTILINE,
     ),
     "experience_level": re.compile(
@@ -87,6 +90,7 @@ _YEAR_RANGE = re.compile(r"(\d+)\s*[-–—]\s*(\d+)\s*(?:years|year|yrs|yr)?")
 _YEAR_PLUS = re.compile(r"(\d+)\s*(?:\+|plus)\s*(?:years|year|yrs|yr)?")
 _YEARS_EXACT = re.compile(r"(\d+)\s*(?:years|year|yrs|yr)")
 _OPEN_ENDED_CAP = 99
+_MAX_EXPERIENCE_YEARS = 60
 
 _METADATA_KEYS: dict[str, tuple[str, ...]] = {
     "title": ("title", "ogTitle", "twitterTitle"),
@@ -104,9 +108,15 @@ _DATE_LINE = re.compile(
 )
 
 _ISO_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
-_HTML_TAG = re.compile(r"<[^>]*>")
+# Only real tags: prose such as "<50k" or ">3 years" must survive.
+_HTML_TAG = re.compile(r"<!--.*?-->|</?[A-Za-z][^>]*>|<![^>]*>", re.DOTALL)
 _MARKDOWN_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
-_MARKDOWN_DECORATION = re.compile(r"[`*_~>#]+")
+# Headings, quotes and bullets only at a line start, emphasis only around
+# words, so "C#", "F#", "snake_case" and "5*3" keep their characters.
+_MARKDOWN_LINE_PREFIX = re.compile(r"^[ \t]*(?:#{1,6}|>+|[-*+])[ \t]+", re.MULTILINE)
+_MARKDOWN_EMPHASIS = re.compile(
+    r"`+|\*{2,}|_{2,}|~{2,}|(?<![\w*])[*_](?=\w)|(?<=\w)[*_](?![\w*])"
+)
 _SPACE = re.compile(r"\s+")
 _GENERIC_PAGE_TITLES = frozenset(
     {
@@ -220,6 +230,7 @@ class PageJobEvidence:
     company_name: str | None = None
     date_posted: date | None = None
     structured_job_posting: bool = False
+    multiple_job_postings: bool = False
 
 
 @dataclass(frozen=True)
@@ -377,7 +388,8 @@ def _clean_page_text(value: str) -> str:
     value = html.unescape(value)
     value = _MARKDOWN_LINK.sub(r"\1", value)
     value = _HTML_TAG.sub(" ", value)
-    value = _MARKDOWN_DECORATION.sub(" ", value)
+    value = _MARKDOWN_LINE_PREFIX.sub("", value)
+    value = _MARKDOWN_EMPHASIS.sub("", value)
     return _SPACE.sub(" ", value).strip()
 
 
@@ -389,12 +401,12 @@ def _page_body(markdown: str | None) -> str | None:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if any(pattern.match(line) for pattern in _LINE_FIELDS.values()):
-            continue
+        # Field lines such as "Experience: 5+ years with Go" stay in the
+        # description: they often state requirements the analysis needs.
         if _DATE_LINE.match(line):
             continue
         lines.append(stripped)
-    cleaned = _clean_page_text(" ".join(lines))
+    cleaned = _clean_page_text("\n".join(lines))
     return cleaned or None
 
 
@@ -504,6 +516,11 @@ def extract_page_evidence(crawl: CrawlResult | None) -> PageJobEvidence:
         if str(key).casefold() in _STRUCTURED_DATA_KEYS:
             postings.extend(_posting_nodes(value))
     posting = postings[0] if postings else None
+    # Pages often repeat their own posting; distinct titles mean a listing.
+    posting_titles = {
+        " ".join((_string_value(_posting_value(item, _POSTING_TITLE_KEYS)) or "").casefold().split())
+        for item in postings
+    }
 
     structured_title = _string_value(
         _posting_value(posting, _POSTING_TITLE_KEYS)
@@ -551,6 +568,7 @@ def extract_page_evidence(crawl: CrawlResult | None) -> PageJobEvidence:
         company_name=_clip(company, COMPANY_NAME_MAX),
         date_posted=date_posted,
         structured_job_posting=posting is not None,
+        multiple_job_postings=len(posting_titles) > 1,
     )
 
 
@@ -710,7 +728,8 @@ def validate_page_evidence(
     if _is_page_error(crawl, evidence):
         return PageValidation(None, PageEvidenceFailure.error)
     if (
-        has_listing_text(crawl)
+        evidence.multiple_job_postings
+        or has_listing_text(crawl)
         or classify_page(crawl) is UrlQuality.listing
     ):
         return PageValidation(None, PageEvidenceFailure.listing)
@@ -745,20 +764,19 @@ def parse_year_range(text: str | None) -> tuple[int, int] | None:
     """
     if not text:
         return None
-    match = _YEAR_RANGE.search(text)
-    if match:
-        low, high = int(match.group(1)), int(match.group(2))
-        if low <= high:
+    # Larger numbers are calendar years ("Graduates of 2024-2025"), not experience.
+    for match in _YEAR_RANGE.finditer(text):
+        low, high = sorted((int(match.group(1)), int(match.group(2))))
+        if high <= _MAX_EXPERIENCE_YEARS:
             return low, high
-        return high, low
-    match = _YEAR_PLUS.search(text)
-    if match:
+    for match in _YEAR_PLUS.finditer(text):
         years = int(match.group(1))
-        return years, _OPEN_ENDED_CAP
-    match = _YEARS_EXACT.search(text)
-    if match:
+        if years <= _MAX_EXPERIENCE_YEARS:
+            return years, _OPEN_ENDED_CAP
+    for match in _YEARS_EXACT.finditer(text):
         years = int(match.group(1))
-        return years, years
+        if years <= _MAX_EXPERIENCE_YEARS:
+            return years, years
     return None
 
 
