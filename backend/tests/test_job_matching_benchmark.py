@@ -1255,7 +1255,7 @@ def test_runner_executes_only_requested_cases_in_requested_order(
     assert client.calls == len(selected_ids)
     assert [row["case_id"] for row in artifact["results"]] == selected_ids
     assert artifact["deterministic_evaluation"]["complete"] is True
-    assert artifact["prompt_version"] == PROMPT_VERSION == "job-matching-v5"
+    assert artifact["prompt_version"] == PROMPT_VERSION == "job-matching-v6"
     assert all(row["prompt_version"] == PROMPT_VERSION for row in artifact["results"])
 
 
