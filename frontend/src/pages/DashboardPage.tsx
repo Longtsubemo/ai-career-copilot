@@ -16,6 +16,7 @@ import { APPLICATION_STATUSES } from "../types/api";
 import { formatDate } from "../utils/format";
 import { APPLICATION_STATUS_META } from "../utils/labels";
 import { isProfileIncomplete } from "../utils/profile";
+import { SUPPORTED_RESUME_FORMATS_LABEL } from "../utils/resumeUpload";
 
 function StatCard({
   label,
@@ -148,7 +149,7 @@ export function DashboardPage() {
         <StatCard
           label="Master resume"
           value={resume.loading ? "…" : resume.data ? "Ready" : "Missing"}
-          hint={resume.data ? "Used for every match" : "Text or Markdown, up to 2 MB"}
+          hint={resume.data ? "Used for every match" : `${SUPPORTED_RESUME_FORMATS_LABEL}, up to 2 MB`}
           to="/resume"
         />
       </div>
