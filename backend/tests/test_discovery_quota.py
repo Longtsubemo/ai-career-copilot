@@ -27,7 +27,7 @@ def test_naive_quota_timestamps_are_rejected() -> None:
 def test_quota_counter_uses_conditional_postgresql_upsert() -> None:
     statement = _increment_statement(
         day=utc_day(datetime(2026, 10, 16, tzinfo=timezone.utc)),
-        scope_key="user:00000000-0000-0000-0000-000000000001",
+        scope_key="local",
         limit=3,
     )
     sql = str(statement.compile(dialect=postgresql.dialect())).lower()

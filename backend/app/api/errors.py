@@ -24,12 +24,6 @@ from app.agents.runtime import (
     InvalidTransitionError,
 )
 from app.services.applications import ApplicationNotFoundError, JobNotFoundError
-from app.services.auth import (
-    DuplicateEmailError,
-    InactiveUserError,
-    InvalidCredentialsError,
-)
-from app.services.candidates import DuplicateCandidateError
 from app.services.job_verification import JobVerificationCooldownError
 from app.services.resume_upload import (
     CandidateNotFoundError,
@@ -161,10 +155,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ImageOnlyResumeError, _domain_handler(400))
     app.add_exception_handler(EmptyResumeError, _domain_handler(400))
     app.add_exception_handler(InvalidResumeError, _domain_handler(400))
-    app.add_exception_handler(DuplicateCandidateError, _domain_handler(409))
-    app.add_exception_handler(DuplicateEmailError, _domain_handler(409))
-    app.add_exception_handler(InvalidCredentialsError, _domain_handler(401))
-    app.add_exception_handler(InactiveUserError, _domain_handler(403))
     app.add_exception_handler(CandidateNotFoundError, _domain_handler(404))
     app.add_exception_handler(ApplicationNotFoundError, _domain_handler(404))
     app.add_exception_handler(JobNotFoundError, _domain_handler(404))

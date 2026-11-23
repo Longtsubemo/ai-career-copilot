@@ -1,6 +1,9 @@
 import type { AxiosError } from "axios";
 
 import type { AgentRun } from "../types/api";
+import { SUPPORTED_RESUME_FORMATS_LABEL } from "../utils/resumeUpload";
+
+const UNSUPPORTED_FILE = `Unsupported file type. Upload your resume as ${SUPPORTED_RESUME_FORMATS_LABEL}.`;
 
 const NETWORK_MESSAGE =
   "Cannot reach the API server. Check that the backend is running and that VITE_API_BASE_URL points at it.";
@@ -13,15 +16,12 @@ const FALLBACKS: Record<number, string> = {
   404: "We could not find what you were looking for.",
   409: "This conflicts with the current state. Refresh the page and try again.",
   413: "That file is too large. The maximum resume size is 2 MB.",
-  415: "Unsupported file type. Upload a plain-text (.txt) or Markdown (.md) resume — PDF and DOCX are not supported yet.",
+  415: UNSUPPORTED_FILE,
   422: "Some fields are invalid. Check your input and try again.",
   429: "Too many requests. Wait a moment and try again.",
   500: "The server hit an unexpected error. Please try again.",
   503: "An external service is unavailable right now. Please try again.",
 };
-
-const UNSUPPORTED_FILE =
-  "Unsupported file type. Upload a plain-text (.txt) or Markdown (.md) resume — PDF and DOCX are not supported yet.";
 
 const MESSAGE_RULES: Array<[RegExp, string]> = [
   [/no candidate profile exists yet/i, "Create your profile first."],

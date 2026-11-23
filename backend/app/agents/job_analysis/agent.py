@@ -31,6 +31,7 @@ from app.agents.job_analysis.contract import (
     InsufficientJobContentError,
     JobAnalysisRequest,
     JobAnalysisResult,
+    JobAnalysisResponse,
     JobNotFoundError,
 )
 from app.agents.job_analysis.prompt import (
@@ -112,11 +113,15 @@ class JobAnalysisAgent:
             experience_level=job.experience_level,
         )
 
-        result = self._gemini.generate_structured(
+        generated = self._gemini.generate_structured(
             prompt=prompt,
-            schema=JobAnalysisResult,
+            schema=JobAnalysisResponse,
             system_instruction=SYSTEM_INSTRUCTION,
         )
+        result = JobAnalysisResponse.model_validate(
+            generated.model_dump(mode="python")
+        )
+        result.validate_requirement_evidence(description)
 
         return persist_analysis(
             session,

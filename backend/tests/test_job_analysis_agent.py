@@ -24,7 +24,11 @@ from app.agents.job_analysis import (
     JobAnalysisInputError,
     JobAnalysisRequest,
     JobAnalysisResult,
+    JobAnalysisResponse,
     JobNotFoundError,
+    JobRequirement,
+    RequirementCategory,
+    RequirementStatus,
     build_analysis_prompt,
     job_analysis_idempotency_key,
     register_job_analysis_handler,
@@ -112,6 +116,624 @@ class TestContract:
         assert JobAnalysisResult.model_validate(dumped) == ANALYSIS
 
     @pytest.mark.parametrize(
+        ("item", "category", "status", "evidence"),
+        [
+            (
+                "AWS certification",
+                "certification",
+                "required",
+                ["AWS certification is required."],
+            ),
+            (
+                "AWS certification",
+                "certification",
+                "preferred",
+                ["AWS certification is preferred."],
+            ),
+            (
+                "AWS certification",
+                "certification",
+                "unclear",
+                ["AWS certification"],
+            ),
+            (
+                "CPA license",
+                "qualification",
+                "required",
+                ["Candidates must hold an active CPA license."],
+            ),
+            (
+                "Kubernetes",
+                "skill",
+                "preferred",
+                ["Experience with Kubernetes is desirable."],
+            ),
+            (
+                "AWS certification",
+                "certification",
+                "unclear",
+                [
+                    "AWS certification is required.",
+                    "AWS certification is preferred.",
+                ],
+            ),
+            (
+                "AWS certification",
+                "certification",
+                "unclear",
+                ["AWS certification may be obtained after joining."],
+            ),
+            (
+                "AWS certification",
+                "certification",
+                "required",
+                ["AWS certification and Azure certification are required."],
+            ),
+            (
+                "Azure certification",
+                "certification",
+                "required",
+                ["AWS certification and Azure certification are required."],
+            ),
+        ],
+        ids=[
+            "required-certification",
+            "preferred-certification",
+            "generic-certification-unclear",
+            "required-qualification",
+            "preferred-skill",
+            "contradictory-wording",
+            "conditional-certification",
+            "compound-aws",
+            "compound-azure",
+        ],
+    )
+    def test_requirement_item_represents_status_and_evidence(
+        self,
+        item: str,
+        category: str,
+        status: str,
+        evidence: list[str],
+    ) -> None:
+        result = JobRequirement.model_validate(
+            {
+                "item": item,
+                "category": category,
+                "status": status,
+                "evidence": evidence,
+            }
+        )
+
+        assert result.item == item
+        assert result.category == RequirementCategory(category)
+        assert result.status == RequirementStatus(status)
+        assert result.evidence == evidence
+        assert JobRequirement.model_validate(result.model_dump(mode="json")) == result
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {
+                "item": "AWS certification",
+                "category": "certification",
+                "status": "required",
+            },
+            {
+                "item": "AWS certification",
+                "category": "certification",
+                "status": "required",
+                "evidence": [],
+            },
+            {
+                "item": "AWS certification",
+                "category": "certification",
+                "status": "required",
+                "evidence": ["   "],
+            },
+            {
+                "item": "AWS certification",
+                "category": "certification",
+                "status": "mandatory",
+                "evidence": ["AWS certification is required."],
+            },
+            {
+                "item": "AWS certification",
+                "category": "license",
+                "status": "required",
+                "evidence": ["AWS certification is required."],
+            },
+            {
+                "item": "AWS certification",
+                "category": "certification",
+                "status": "required",
+                "evidence": ["AWS certification is required."],
+                "extra": "not allowed",
+            },
+        ],
+        ids=[
+            "missing-evidence",
+            "empty-evidence",
+            "blank-evidence",
+            "bad-status",
+            "bad-category",
+            "extra-field",
+        ],
+    )
+    def test_invalid_requirement_item_is_rejected(self, payload: dict) -> None:
+        with pytest.raises(ValidationError):
+            JobRequirement.model_validate(payload)
+
+    def test_requirement_item_rejects_a_blank_name(self) -> None:
+        with pytest.raises(ValidationError, match="item must not be blank"):
+            JobRequirement.model_validate(
+                {
+                    "item": "  ",
+                    "category": "certification",
+                    "status": "required",
+                    "evidence": ["AWS certification is required."],
+                }
+            )
+
+    def test_evidence_for_an_unrelated_requirement_is_rejected(self) -> None:
+        with pytest.raises(
+            ValidationError, match="each evidence excerpt must name its requirement item"
+        ):
+            JobRequirement(
+                item="AWS certification",
+                category=RequirementCategory.certification,
+                status=RequirementStatus.required,
+                evidence=["CPA license is required."],
+            )
+
+    def test_required_or_preferred_evidence_needs_a_status_cue(self) -> None:
+        for status in (RequirementStatus.required, RequirementStatus.preferred):
+            with pytest.raises(ValidationError, match="needs an associated explicit"):
+                JobRequirement(
+                    item="AWS certification",
+                    category=RequirementCategory.certification,
+                    status=status,
+                    evidence=["AWS certification"],
+                )
+
+    def test_valid_required_and_preferred_evidence_matches_source(self) -> None:
+        for status, excerpt in (
+            (RequirementStatus.required, "AWS certification is required."),
+            (RequirementStatus.preferred, "AWS certification is a plus."),
+        ):
+            result = JobAnalysisResult(
+                summary="A role.",
+                confidence=0.8,
+                requirement_items=[
+                    JobRequirement(
+                        item="AWS certification",
+                        category=RequirementCategory.certification,
+                        status=status,
+                        evidence=[excerpt],
+                    )
+                ],
+            )
+            result.validate_requirement_evidence(f"Other text. {excerpt}")
+
+    def test_evidence_matching_normalizes_unicode_but_keeps_punctuation(self) -> None:
+        source = "Café certification is required!"
+        evidence = "Cafe\u0301 certification is required!"
+        requirement = JobRequirement(
+            item="Café certification",
+            category=RequirementCategory.certification,
+            status=RequirementStatus.required,
+            evidence=[evidence],
+        )
+
+        requirement.validate_evidence_against(source)
+        with pytest.raises(ValueError, match="not present in the supplied job description"):
+            requirement.validate_evidence_against("Café certification is required.")
+
+    def test_short_generic_evidence_is_rejected(self) -> None:
+        with pytest.raises(
+            ValidationError, match="each evidence excerpt must name its requirement item"
+        ):
+            JobRequirement(
+                item="AWS certification",
+                category=RequirementCategory.certification,
+                status=RequirementStatus.unclear,
+                evidence=["AWS"],
+            )
+
+    def test_duplicate_evidence_excerpts_are_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="evidence excerpts must not be duplicated"):
+            JobRequirement(
+                item="AWS certification",
+                category=RequirementCategory.certification,
+                status=RequirementStatus.required,
+                evidence=[
+                    "AWS certification is required.",
+                    " aws certification IS REQUIRED. ",
+                ],
+            )
+
+    def test_negative_status_cues_do_not_satisfy_required_or_preferred(self) -> None:
+        for status, evidence in (
+            (RequirementStatus.required, "AWS certification is not required."),
+            (RequirementStatus.required, "No AWS certification is required."),
+            (RequirementStatus.preferred, "AWS certification is not preferred."),
+        ):
+            with pytest.raises(ValidationError, match="needs an associated explicit"):
+                JobRequirement(
+                    item="AWS certification",
+                    category=RequirementCategory.certification,
+                    status=status,
+                    evidence=[evidence],
+                )
+
+    @pytest.mark.parametrize(
+        ("evidence", "status", "accepted"),
+        [
+            (
+                "AWS certification is required.",
+                RequirementStatus.required,
+                True,
+            ),
+            (
+                "No AWS certification is required.",
+                RequirementStatus.required,
+                False,
+            ),
+            (
+                "AWS certification is not required but preferred.",
+                RequirementStatus.preferred,
+                True,
+            ),
+            (
+                "AWS certification is not mandatory.",
+                RequirementStatus.required,
+                False,
+            ),
+            (
+                "AWS certification is not required and is preferred.",
+                RequirementStatus.preferred,
+                True,
+            ),
+            (
+                "AWS certification is required, not preferred.",
+                RequirementStatus.preferred,
+                False,
+            ),
+        ],
+        ids=[
+            "explicit-required",
+            "no-certification-required",
+            "not-required-but-preferred",
+            "not-mandatory",
+            "not-required-and-preferred",
+            "required-not-preferred",
+        ],
+    )
+    def test_negation_is_scoped_to_the_relevant_status_cue(
+        self, evidence, status, accepted
+    ) -> None:
+        payload = {
+            "item": "AWS certification",
+            "category": RequirementCategory.certification,
+            "status": status,
+            "evidence": [evidence],
+        }
+        if accepted:
+            JobRequirement.model_validate(payload)
+        else:
+            with pytest.raises(ValidationError):
+                JobRequirement.model_validate(payload)
+
+    def test_negated_mandatory_wording_can_remain_unclear(self) -> None:
+        requirement = JobRequirement(
+            item="AWS certification",
+            category=RequirementCategory.certification,
+            status=RequirementStatus.unclear,
+            evidence=["AWS certification is not mandatory."],
+        )
+
+        assert requirement.status is RequirementStatus.unclear
+
+    def test_contradictory_negated_and_positive_required_cues_must_be_unclear(
+        self,
+    ) -> None:
+        evidence = "AWS certification is not required and mandatory."
+
+        with pytest.raises(ValidationError):
+            JobRequirement(
+                item="AWS certification",
+                category=RequirementCategory.certification,
+                status=RequirementStatus.required,
+                evidence=[evidence],
+            )
+
+        unclear = JobRequirement(
+            item="AWS certification",
+            category=RequirementCategory.certification,
+            status=RequirementStatus.unclear,
+            evidence=[evidence],
+        )
+        assert unclear.status is RequirementStatus.unclear
+
+    def test_another_items_status_cue_does_not_classify_this_item(self) -> None:
+        evidence = (
+            "AWS certification is not required and CPA license is preferred."
+        )
+
+        with pytest.raises(ValidationError):
+            JobRequirement(
+                item="AWS certification",
+                category=RequirementCategory.certification,
+                status=RequirementStatus.preferred,
+                evidence=[evidence],
+            )
+
+        cpa = JobRequirement(
+            item="CPA license",
+            category=RequirementCategory.qualification,
+            status=RequirementStatus.preferred,
+            evidence=[evidence],
+        )
+        assert cpa.status is RequirementStatus.preferred
+
+    def test_independent_requirements_in_one_sentence_keep_their_statuses(self) -> None:
+        evidence = "AWS certification is required and CPA license is preferred."
+
+        aws = JobRequirement(
+            item="AWS certification",
+            category=RequirementCategory.certification,
+            status=RequirementStatus.required,
+            evidence=[evidence],
+        )
+        cpa = JobRequirement(
+            item="CPA license",
+            category=RequirementCategory.qualification,
+            status=RequirementStatus.preferred,
+            evidence=[evidence],
+        )
+
+        assert aws.status is RequirementStatus.required
+        assert cpa.status is RequirementStatus.preferred
+
+    def test_one_item_with_conflicting_evidence_must_be_unclear(self) -> None:
+        with pytest.raises(
+            ValidationError, match="conflicting required/preferred evidence"
+        ):
+            JobRequirement(
+                item="AWS certification",
+                category=RequirementCategory.certification,
+                status=RequirementStatus.required,
+                evidence=[
+                    "AWS certification is required.",
+                    "AWS certification is preferred.",
+                ],
+            )
+
+    def test_requirement_evidence_must_be_found_in_source_text(self) -> None:
+        requirement = JobRequirement(
+            item="AWS certification",
+            category=RequirementCategory.certification,
+            status=RequirementStatus.unclear,
+            evidence=["AWS certification is required."],
+        )
+        result = JobAnalysisResult(
+            summary="A role.", confidence=0.8, requirement_items=[requirement]
+        )
+
+        result.validate_requirement_evidence(
+            "Qualifications:\nAWS certification is REQUIRED."
+        )
+        with pytest.raises(
+            ValueError, match="not present in the supplied job description"
+        ):
+            result.validate_requirement_evidence("Qualifications: CPA license required.")
+
+    def test_contradictory_excerpts_are_valid_only_when_both_are_in_source(self) -> None:
+        result = JobAnalysisResponse(
+            summary="A role.",
+            confidence=0.6,
+            requirement_items=[
+                JobRequirement(
+                    item="AWS certification",
+                    category=RequirementCategory.certification,
+                    status=RequirementStatus.unclear,
+                    evidence=[
+                        "AWS certification is required.",
+                        "AWS certification is preferred.",
+                    ],
+                )
+            ],
+        )
+
+        result.validate_requirement_evidence(
+            "AWS certification is required. Elsewhere, AWS certification is preferred."
+        )
+        with pytest.raises(
+            ValueError, match="not present in the supplied job description"
+        ):
+            result.validate_requirement_evidence("AWS certification is required.")
+
+    @pytest.mark.parametrize(
+        "second_status",
+        [RequirementStatus.required, RequirementStatus.preferred],
+        ids=["same-status", "conflicting-status"],
+    )
+    def test_duplicate_requirement_items_are_rejected(self, second_status) -> None:
+        first = JobRequirement(
+            item="AWS certification",
+            category=RequirementCategory.certification,
+            status=RequirementStatus.required,
+            evidence=["AWS certification is required."],
+        )
+        second_evidence = (
+            "AWS certification is required."
+            if second_status is RequirementStatus.required
+            else "AWS certification is preferred."
+        )
+        second = JobRequirement(
+            item=" aws   CERTIFICATION ",
+            category=RequirementCategory.certification,
+            status=second_status,
+            evidence=[second_evidence],
+        )
+
+        with pytest.raises(
+            ValidationError, match="duplicate requirement item"
+        ):
+            JobAnalysisResponse(
+                summary="A role.",
+                confidence=0.8,
+                requirement_items=[first, second],
+            )
+
+    def test_unclear_single_item_preserves_both_conflicting_excerpts(self) -> None:
+        result = JobAnalysisResponse(
+            summary="A role.",
+            confidence=0.6,
+            requirement_items=[
+                JobRequirement(
+                    item="AWS certification",
+                    category=RequirementCategory.certification,
+                    status=RequirementStatus.unclear,
+                    evidence=[
+                        "AWS certification is required.",
+                        "AWS certification is preferred.",
+                    ],
+                )
+            ],
+        )
+
+        result.validate_requirement_evidence(
+            "AWS certification is required. AWS certification is preferred."
+        )
+        assert result.requirement_items[0].status is RequirementStatus.unclear
+        assert len(result.requirement_items[0].evidence) == 2
+
+    @pytest.mark.parametrize(
+        ("status", "legacy_required", "legacy_preferred", "error"),
+        [
+            (RequirementStatus.required, ["Kubernetes"], [], None),
+            (RequirementStatus.preferred, [], ["Kubernetes"], None),
+            (RequirementStatus.unclear, [], [], None),
+            (
+                RequirementStatus.required,
+                [],
+                ["Kubernetes"],
+                "structured required skills",
+            ),
+            (
+                RequirementStatus.preferred,
+                ["Kubernetes"],
+                [],
+                "structured preferred skills",
+            ),
+            (
+                RequirementStatus.unclear,
+                ["Kubernetes"],
+                [],
+                "structured unclear skills",
+            ),
+            (
+                RequirementStatus.unclear,
+                [],
+                ["Kubernetes"],
+                "structured unclear skills",
+            ),
+        ],
+        ids=[
+            "required-skill-in-required-array",
+            "preferred-skill-in-preferred-array",
+            "unclear-skill-in-neither-array",
+            "required-skill-not-in-required-array",
+            "preferred-skill-not-in-preferred-array",
+            "unclear-skill-not-required",
+            "unclear-skill-not-preferred",
+        ],
+    )
+    def test_structured_skill_status_matches_legacy_arrays(
+        self, status, legacy_required, legacy_preferred, error
+    ) -> None:
+        cue = {
+            RequirementStatus.required: "Kubernetes is required.",
+            RequirementStatus.preferred: "Kubernetes is preferred.",
+            RequirementStatus.unclear: "Kubernetes experience.",
+        }[status]
+        payload = {
+            "summary": "A role.",
+            "confidence": 0.8,
+            "required_skills": legacy_required,
+            "preferred_skills": legacy_preferred,
+            "requirement_items": [
+                {
+                    "item": "Kubernetes",
+                    "category": "skill",
+                    "status": status.value,
+                    "evidence": [cue],
+                }
+            ],
+        }
+        if error is None:
+            result = JobAnalysisResponse.model_validate(payload)
+            assert result.requirement_items[0].status is status
+        else:
+            with pytest.raises(ValidationError, match=error):
+                JobAnalysisResponse.model_validate(payload)
+
+    def test_a_skill_cannot_appear_in_both_legacy_arrays(self) -> None:
+        with pytest.raises(ValidationError, match="must not appear in both"):
+            JobAnalysisResponse(
+                summary="A role.",
+                confidence=0.8,
+                required_skills=["Kubernetes"],
+                preferred_skills=[" kubernetes "],
+                requirement_items=[],
+            )
+
+    def test_historical_analysis_without_requirement_items_remains_valid(self) -> None:
+        historical = ANALYSIS.model_dump(mode="json", exclude={"requirement_items"})
+
+        loaded = JobAnalysisResult.model_validate(historical)
+
+        assert loaded.requirement_items == []
+        assert loaded.qualifications == ANALYSIS.qualifications
+        assert loaded.certifications == ANALYSIS.certifications
+
+    def test_new_model_response_requires_requirement_items(self) -> None:
+        legacy_payload = ANALYSIS.model_dump(
+            mode="json", exclude={"requirement_items"}
+        )
+
+        with pytest.raises(ValidationError):
+            JobAnalysisResponse.model_validate(legacy_payload)
+
+        schema = JobAnalysisResponse.model_json_schema()
+        assert "requirement_items" in schema["required"]
+
+    def test_requirement_items_round_trip_in_analysis_serialization(self) -> None:
+        result = JobAnalysisResult(
+            summary="A role.",
+            confidence=0.8,
+            requirement_items=[
+                JobRequirement(
+                    item="AWS certification",
+                    category=RequirementCategory.certification,
+                    status=RequirementStatus.required,
+                    evidence=["AWS certification is required."],
+                )
+            ],
+        )
+
+        serialized = result.model_dump(mode="json")
+        restored = JobAnalysisResult.model_validate(serialized)
+
+        assert serialized["requirement_items"][0] == {
+            "item": "AWS certification",
+            "category": "certification",
+            "status": "required",
+            "evidence": ["AWS certification is required."],
+        }
+        assert restored == result
+
+    @pytest.mark.parametrize(
         "payload",
         [
             {},
@@ -184,14 +806,14 @@ class TestContract:
 
         key = job_analysis_idempotency_key(job_id, PROMPT_VERSION)
 
-        assert key == f"job_analysis:{job_id}:job-analysis-v1"
+        assert key == f"job_analysis:{job_id}:job-analysis-v2"
         assert key == job_analysis_idempotency_key(str(job_id), PROMPT_VERSION)
-        assert job_analysis_idempotency_key(job_id, "job-analysis-v2") != key
+        assert job_analysis_idempotency_key(job_id, "job-analysis-v3") != key
 
 
 class TestPrompt:
-    def test_prompt_version_is_the_agreed_v1(self) -> None:
-        assert PROMPT_VERSION == "job-analysis-v1"
+    def test_prompt_version_is_the_agreed_v2(self) -> None:
+        assert PROMPT_VERSION == "job-analysis-v2"
 
     def test_prompt_contains_every_supplied_field(self) -> None:
         prompt = build_analysis_prompt(
@@ -225,6 +847,32 @@ class TestPrompt:
         assert "candidate" not in SYSTEM_INSTRUCTION.lower().replace(
             "do not consider any candidate", ""
         )
+
+    def test_system_instruction_classifies_and_preserves_requirement_evidence(
+        self,
+    ) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+
+        assert '"requirement_items"' in instruction
+        assert '"required", "preferred", or "unclear"' in instruction
+        assert (
+            'generic list entry or mention without a clear status is "unclear"'
+            in instruction
+        )
+        assert "preserve excerpts for both statements" in instruction
+        assert "may be obtained after joining" in instruction
+        assert "verbatim" in instruction
+        assert "split compound requirements into separate items" in instruction
+        assert "legacy compatibility lists" in instruction
+        assert "explicitly makes it mandatory" in instruction
+        assert "explicitly presents it as preferred" in instruction
+        assert (
+            "do not infer mandatory status from a qualifications or certifications heading"
+            in instruction
+        )
+        assert "every evidence excerpt must name or unambiguously identify its item" in instruction
+        assert "in the same excerpt" in instruction
+        assert "do not by themselves prove semantic entailment" in instruction
 
 
 class TestRegistration:
@@ -297,7 +945,7 @@ class TestAnalysisWithDatabase:
 
         assert len(fake.calls) == 1
         call = fake.calls[0]
-        assert call["schema"] is JobAnalysisResult
+        assert call["schema"] is JobAnalysisResponse
         assert call["system_instruction"] == SYSTEM_INSTRUCTION
         assert "Title: Senior AI Engineer" in call["prompt"]
         assert "Build agentic systems in Bangalore." in call["prompt"]
@@ -354,12 +1002,12 @@ class TestAnalysisWithDatabase:
 
         v2 = JobAnalysisAgent(
             FakeGeminiClient(ANALYSIS_V2, model="gemini-other"),
-            prompt_version="job-analysis-v2",
+            prompt_version="job-analysis-v3",
         )
         second_envelope = v2.analyze(session, job.id)
 
         assert first_envelope["prompt_version"] == PROMPT_VERSION
-        assert second_envelope["prompt_version"] == "job-analysis-v2"
+        assert second_envelope["prompt_version"] == "job-analysis-v3"
         assert second_envelope["model"] == "gemini-other"
         assert second_envelope["analysis"] == ANALYSIS_V2.model_dump(mode="json")
         assert analysis_count(session) == 2
@@ -372,7 +1020,7 @@ class TestAnalysisWithDatabase:
             mode="json"
         )
         assert by_version[PROMPT_VERSION].model == "gemini-3.8-flash"
-        assert by_version["job-analysis-v2"].analysis == ANALYSIS_V2.model_dump(
+        assert by_version["job-analysis-v3"].analysis == ANALYSIS_V2.model_dump(
             mode="json"
         )
 
@@ -408,7 +1056,7 @@ class TestAnalysisWithDatabase:
         fake = FakeGeminiClient(GeminiError("quota exceeded"))
         agent = JobAnalysisAgent(fake)
 
-        with pytest.raises(GeminiError, match="quota exceeded"):
+        with pytest.raises(GeminiError, match="Gemini request failed"):
             agent.analyze(session, job.id)
 
         assert analysis_count(session) == 0
@@ -420,7 +1068,7 @@ class TestAnalysisWithDatabase:
         api = RecordingGeminiApi(parsed=None, text='{"unexpected": true}')
         agent = JobAnalysisAgent(GeminiClient("gemini-3.8-flash", api=api))
 
-        with pytest.raises(GeminiError, match="does not match the expected schema"):
+        with pytest.raises(GeminiError, match="Gemini returned unusable structured output"):
             agent.analyze(session, job.id)
 
         assert len(api.calls) == 1

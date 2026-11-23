@@ -7,9 +7,15 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node --test \"tests/**/*.test.ts\""
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "npm run build && tauri build --no-bundle",
+    "desktop:package": "powershell -NoProfile -ExecutionPolicy Bypass -File ../tools/build_backend_runtime.ps1 && npm run desktop:build && powershell -NoProfile -ExecutionPolicy Bypass -File ../tools/package_desktop_portable.ps1",
+    "desktop:installer": "powershell -NoProfile -File ../tools/build_windows_installer.ps1"
   },
   "dependencies": {
+    "@tauri-apps/api": "2.12.4",
     "axios": "^1.20.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -17,6 +23,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "2.12.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",

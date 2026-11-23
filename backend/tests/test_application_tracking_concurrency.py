@@ -20,26 +20,20 @@ from app.models.application import Application
 from app.models.candidate import Candidate
 from app.models.company import Company
 from app.models.job import Job
-from app.models.user import User
 from app.services.applications import track_application
 from tests.factories import make_candidate, make_company, make_job
 
 
-def _seed_world(engine: Engine) -> tuple[UUID, UUID, UUID, UUID]:
+def _seed_world(engine: Engine) -> tuple[UUID, UUID, UUID]:
     """Commit a candidate and a job so both workers can see them."""
     session = Session(engine)
     try:
         company = make_company(session)
         job = make_job(session, company)
         candidate = make_candidate(session)
-        candidate_id, job_id, company_id, user_id = (
-            candidate.id,
-            job.id,
-            company.id,
-            candidate.user_id,
-        )
+        candidate_id, job_id, company_id = candidate.id, job.id, company.id
         session.commit()
-        return candidate_id, job_id, company_id, user_id
+        return candidate_id, job_id, company_id
     finally:
         session.close()
 
@@ -50,7 +44,6 @@ def _cleanup(
     candidate_id: UUID,
     job_id: UUID,
     company_id: UUID,
-    user_id: UUID,
 ) -> None:
     """Remove the committed rows so later tests start from a clean slate."""
     session = Session(engine)
@@ -61,7 +54,6 @@ def _cleanup(
         session.execute(delete(Job).where(Job.id == job_id))
         session.execute(delete(Company).where(Company.id == company_id))
         session.execute(delete(Candidate).where(Candidate.id == candidate_id))
-        session.execute(delete(User).where(User.id == user_id))
         session.commit()
     finally:
         session.close()
@@ -80,7 +72,7 @@ def _count_applications(engine: Engine, job_id: UUID) -> int:
 
 
 def test_concurrent_tracking_collapses_to_one_application(engine: Engine) -> None:
-    candidate_id, job_id, company_id, user_id = _seed_world(engine)
+    candidate_id, job_id, company_id = _seed_world(engine)
     first_committed = Event()
     second_attempted = Event()
     second_finished = Event()
@@ -133,5 +125,4 @@ def test_concurrent_tracking_collapses_to_one_application(engine: Engine) -> Non
             candidate_id=candidate_id,
             job_id=job_id,
             company_id=company_id,
-            user_id=user_id,
         )

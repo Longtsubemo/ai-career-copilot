@@ -1,6 +1,6 @@
 # AI Career Copilot
 
-AI Career Copilot is a locally runnable portfolio project for a grounded job-search workflow. It combines deterministic job discovery and vacancy checks with AI-assisted job analysis, resume matching, cover-letter drafting, and application tracking.
+AI Career Copilot is a local, single-user job-search workflow. It combines deterministic job discovery and vacancy checks with AI-assisted job analysis, resume matching, cover-letter drafting, and application tracking. It opens directly into one locally stored profile and does not require an account, password, sign-in, or logout.
 
 The project emphasizes traceable data flow: discovery only considers registered employer career pages and supported ATS posting URLs, validates evidence from the crawled page, and records agent runs and provider-operation quotas in PostgreSQL.
 
@@ -12,7 +12,7 @@ The project emphasizes traceable data flow: discovery only considers registered 
 - **Match a resume:** compare a candidate profile and resume against a saved job analysis.
 - **Draft cover letters:** produce a job-specific draft grounded in the saved job analysis, match, and resume evidence.
 - **Manage application progress:** track application status and notes for a candidate's jobs.
-- **Keep account data separate:** registration, cookie sessions, CSRF checks, ownership checks, and durable daily provider-operation quotas are implemented in the API.
+- **Keep one local profile:** the API initializes the profile on first use and scopes profile, resume, match, and application data to it. Durable daily provider-operation quotas are stored locally.
 - **Version resume uploads:** extract text locally from TXT, Markdown, PDF, or DOCX and retain immutable versions in PostgreSQL. OCR for scanned PDFs is not supported.
 
 AI-assisted actions require a configured Gemini API key. Job discovery requires compatible search and Firecrawl scrape services. These integrations are never called by the automated tests; tests use fakes and mocked transports.
@@ -21,8 +21,9 @@ AI-assisted actions require a configured Gemini API key. Job discovery requires 
 
 ```mermaid
 flowchart LR
-    Browser[React + Vite browser app] -->|same origin in production; Vite proxy in development| API[FastAPI API]
-    API --> Auth[Session auth + CSRF + ownership checks]
+    Desktop[Tauri desktop shell] -->|same origin; loopback only| API[FastAPI API]
+    Browser[React + Vite development app] -->|Vite proxy to loopback| API
+    API --> Local[Single local profile + origin checks]
     API --> DB[(PostgreSQL + Alembic schema)]
     API --> Runtime[Persisted synchronous agent runtime]
     Runtime --> Discovery[Discovery agent]
@@ -39,7 +40,7 @@ flowchart LR
     ResumeParser --> DB
 ```
 
-The production Dockerfile builds the frontend and serves it from FastAPI on the same origin. During development, Vite proxies API paths to FastAPI. Agent execution is synchronous in the request; there is no background worker or general-purpose web crawler.
+During development, Vite proxies API paths to the loopback FastAPI service. The Dockerfile remains a CI image-build check and binds the API to loopback inside the container; it is not a network deployment. Agent execution is synchronous in the request; there is no background worker or general-purpose web crawler.
 
 ## Tech stack
 
@@ -47,8 +48,23 @@ The production Dockerfile builds the frontend and serves it from FastAPI on the 
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS.
 - **Persistence:** PostgreSQL; migrations are maintained with Alembic.
 - **AI and integrations:** Google Gemini, SearXNG or Firecrawl Search, and Firecrawl Scrape.
-- **Security:** Argon2 password hashing, opaque database-backed sessions, CSRF protection, per-account data ownership, and PostgreSQL-backed daily provider-operation quotas.
+- **Security:** loopback-only API, exact local browser origins, cross-site request rejection, Tauri capabilities, local profile scoping, and PostgreSQL-backed daily provider-operation quotas. The application has no user authentication and is not a hosted multi-user service.
 - **Quality checks:** pytest, frontend TypeScript/Vite build, and a Docker image build in GitHub Actions.
+
+## Windows desktop developer shell
+
+The repository includes a Tauri 2 Windows shell connected to the managed
+PostgreSQL 16.16 and FastAPI runtime. For local development, it starts the
+Python supervisor from `backend/.venv`, keeps application data under
+`%LOCALAPPDATA%\AI Career Copilot`, and uses a dynamic loopback port. The shell
+does not install a Windows service, change `PATH`, or use the browser-development
+database. See [the desktop runtime notes](docs/DESKTOP_RUNTIME.md) for setup,
+isolation, and lifecycle details.
+
+This is an experimental developer shell, not an installer or a ready-to-use
+end-user application. Python is supplied by the repository's virtual environment, and no installer
+or release bundle is produced. The browser-based setup below remains unchanged
+and continues to use developer-managed PostgreSQL.
 
 ## Local setup (Windows PowerShell)
 
@@ -56,7 +72,21 @@ The production Dockerfile builds the frontend and serves it from FastAPI on the 
 
 - Python 3.13 (the Docker build uses Python 3.13).
 - Node.js 22 and npm.
-- PostgreSQL 16. Docker Desktop is one way to run a local PostgreSQL instance; an existing local PostgreSQL installation also works.
+- For browser development: PostgreSQL 16, either from the Docker example below or a developer-managed local server. The desktop developer shell uses its separate managed runtime.
+- For the desktop shell: Rust (MSVC toolchain), Microsoft C++ Build Tools, WebView2 Runtime, and the backend `.venv` dependencies.
+
+From `frontend/`, install frontend dependencies and start the desktop shell:
+
+```powershell
+npm ci
+npm run desktop:dev
+```
+
+The Tauri development command builds the frontend, starts Vite, and launches
+the managed runtime. It does not require `backend/.env`; desktop settings are
+isolated from developer environment variables. To use a disposable data root
+for shell checks, set `AI_CAREER_COPILOT_TEST_DATA_DIR` to a new absolute
+directory whose final name is `AI Career Copilot` before running the command.
 - Search/crawl services for discovery, and a Gemini API key for AI-assisted analysis/matching/cover-letter actions. These provider services are not included in this repository's Dockerfile.
 
 ### 1. Start a disposable local PostgreSQL service with Docker
@@ -124,7 +154,7 @@ The checked-in `backend/.env.example` selects SearXNG search and uses local serv
 - `CAREER_COPILOT_FIRECRAWL_API_KEY` for authenticated Firecrawl services. It is required when Firecrawl Search is the selected search provider.
 - `CAREER_COPILOT_GEMINI_API_KEY` for job analysis and the resume-based Gemini features.
 
-For a hosted Firecrawl service, configure its base URL and API key in your local `backend/.env`; the key stays server-side. Check the provider's current plan, terms, and API compatibility before using it. The application will not bypass login, access controls, or bot protections on job sites.
+For a hosted Firecrawl service, configure its base URL and API key in your local `backend/.env`; the key stays server-side. Check the provider's current plan, terms, and API compatibility before using it. The application will not bypass sign-in requirements, access controls, or bot protections on job sites.
 
 See [backend/.env.example](backend/.env.example) and [frontend/.env.example](frontend/.env.example) for the environment-variable templates. The root `.env.example` is only a pointer to those files.
 
@@ -140,11 +170,9 @@ Important backend settings use the `CAREER_COPILOT_` prefix:
 | `CAREER_COPILOT_GEMINI_API_KEY` | Server-side Gemini credential for AI agent calls. |
 | `CAREER_COPILOT_GEMINI_MODEL` | Gemini model identifier. |
 | `CAREER_COPILOT_ENABLE_RESUME_AI` | Enables resume upload and resume-based Gemini features; production defaults off. |
-| `CAREER_COPILOT_DISCOVERY_DAILY_USER_LIMIT` / `CAREER_COPILOT_DISCOVERY_DAILY_GLOBAL_LIMIT` | Per-account and shared daily provider-operation limits. |
+| `CAREER_COPILOT_DISCOVERY_DAILY_LOCAL_LIMIT` / `CAREER_COPILOT_DISCOVERY_DAILY_GLOBAL_LIMIT` | Per-installation and shared daily provider-operation limits. |
 | `CAREER_COPILOT_JOB_FRESHNESS_DAYS` / `CAREER_COPILOT_JOB_VERIFICATION_COOLDOWN_SECONDS` | Job freshness and per-job verification cooldown. |
 | `CAREER_COPILOT_CORS_ORIGINS` | Browser origins allowed by the API; production defaults to no cross-origin origins. |
-| `CAREER_COPILOT_SESSION_COOKIE_NAME` / `CAREER_COPILOT_CSRF_COOKIE_NAME` | Names for the session and CSRF cookies. |
-| `CAREER_COPILOT_SESSION_TTL_SECONDS` / `CAREER_COPILOT_SESSION_COOKIE_SECURE` / `CAREER_COPILOT_SESSION_COOKIE_SAMESITE` | Session lifetime and cookie security options. |
 | `CAREER_COPILOT_ENVIRONMENT` / `CAREER_COPILOT_DEBUG` / `CAREER_COPILOT_LOG_LEVEL` / `CAREER_COPILOT_APP_NAME` / `CAREER_COPILOT_APP_VERSION` | Runtime identity, environment, and logging behavior. |
 | `VITE_API_BASE_URL` | Frontend build-time API base URL; blank for the Vite proxy or same-origin build. |
 
@@ -155,6 +183,12 @@ Run backend commands from `backend/`:
 ```powershell
 .\.venv\Scripts\python.exe -m alembic upgrade head
 ```
+
+Before applying this migration to an existing development database, take a
+PostgreSQL backup. The desktop runtime creates a pre-upgrade backup
+automatically. The local-profile migration removes obsolete account and
+session tables after preserving candidate-linked records; restoring the backup
+is the supported way to recover those removed authentication records.
 
 The backend test suite uses PostgreSQL-specific behavior. **Tests can create databases and drop/recreate tables**, and migration tests create a separate scratch database. Use a disposable PostgreSQL instance and a test-only role/database that may be destroyed; never point `TEST_DATABASE_URL` at a production or valuable development database.
 
@@ -183,17 +217,17 @@ The root `Dockerfile` builds the React bundle and runs the FastAPI app in a non-
 docker build -t ai-career-copilot:local .
 ```
 
-When running the image, provide a PostgreSQL URL and provider endpoints reachable from inside the container. `localhost` inside the app container refers to that container; for services running on the Windows host, Docker Desktop commonly exposes the host as `host.docker.internal`. Set production-like secrets through the container environment, not image build arguments or committed files. Production settings require HTTPS service/database configuration and secure session cookies.
+The image build is retained as a packaging check. The API binds to loopback inside the container and is not a supported network or hosted deployment. The desktop runtime is the intended application boundary.
 
 ## Security and privacy
 
-- Never commit `.env` files, provider keys, database credentials, session tokens, real resumes, database dumps, or user uploads. Use synthetic data in issues and tests.
-- Passwords are hashed; session and CSRF tokens are not returned in API response bodies. Browser state-changing requests use CSRF protection.
+- Never commit `.env` files, provider keys, database credentials, real resumes, database dumps, or user uploads. Use synthetic data in issues and tests.
+- The local API has no user authentication. It binds to loopback, permits only the supported local development browser origins, and rejects unexpected browser origins and cross-site requests. This is a local application boundary, not a security boundary between processes running as the same Windows user; do not expose the API on a network or use it as a shared service.
 - Resume uploads are parsed locally and stored as extracted text in PostgreSQL. Uploading does not itself call Gemini. Job matching and cover-letter generation send resume-derived content to the configured Gemini service; job analysis sends job information. Review your provider's data handling and use non-sensitive test resumes when evaluating the project.
 - Discovery sends the search query to the configured search provider and candidate pages to the configured crawl provider. Saved job/resume content remains in your configured database.
 - Daily provider-operation quotas protect discovery and explicit job verification. They are application-level budgets, not guarantees about a provider's billing or request accounting.
 - The source registry is intentionally conservative. Unsupported employer sites are skipped; recognition of an ATS host alone does not establish that every URL is a vacancy.
-- This is a portfolio project, not a production security certification. Configure secrets, backups, access controls, and data retention appropriately for your environment.
+- This is a local portfolio application, not a production security certification. Protect the Windows account and local data directory, configure secrets, and keep backups appropriately.
 
 ## Limitations and troubleshooting
 

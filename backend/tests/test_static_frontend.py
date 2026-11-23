@@ -15,7 +15,7 @@ def static_client(tmp_path) -> TestClient:
     assets = tmp_path / "assets"
     assets.mkdir()
     (assets / "app.js").write_text("window.appReady = true;", encoding="utf-8")
-    return TestClient(create_app(frontend_dist_dir=tmp_path))
+    return TestClient(create_app(frontend_dist_dir=tmp_path), base_url="http://localhost")
 
 
 def test_root_and_client_routes_serve_spa_entrypoint(tmp_path) -> None:
@@ -34,6 +34,23 @@ def test_static_assets_are_served(tmp_path) -> None:
         response = client.get("/assets/app.js")
     assert response.status_code == 200
     assert "window.appReady" in response.text
+
+
+def test_desktop_static_frontend_gets_a_restrictive_content_security_policy(
+    tmp_path, monkeypatch
+) -> None:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "runtime_mode", "desktop")
+    with static_client(tmp_path) as client:
+        response = client.get("/")
+
+    assert response.headers["content-security-policy"] == (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; "
+        "base-uri 'self'; form-action 'self'"
+    )
 
 
 def test_unknown_api_paths_remain_404_instead_of_spa_fallback(tmp_path) -> None:
@@ -65,7 +82,7 @@ def test_static_mount_does_not_expose_files_outside_build_directory(tmp_path) ->
     build.mkdir()
     (build / "index.html").write_text("safe-shell", encoding="utf-8")
 
-    with TestClient(create_app(frontend_dist_dir=build)) as client:
+    with TestClient(create_app(frontend_dist_dir=build), base_url="http://localhost") as client:
         response = client.get("/%2e%2e/outside.txt")
 
     assert "private-marker" not in response.text

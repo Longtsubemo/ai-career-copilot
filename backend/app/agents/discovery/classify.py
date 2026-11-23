@@ -161,6 +161,11 @@ _CLOSURE_MARKERS = (
     "vacancy has been filled",
 )
 
+# A closure phrase right after one of these words describes a future event.
+_CONDITIONAL_PREFIX = re.compile(
+    r"\b(?:until|till|once|when|after|before|if|unless)\s+"
+    r"(?:(?:the|this|a|our|we\s+are|we're)\s+)?\Z"
+)
 _URL_MAX_LENGTH = 300
 _TOKEN_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 _JWT_PATH_SEGMENT = re.compile(
@@ -261,8 +266,21 @@ def has_closure_evidence(crawl: CrawlResult | None) -> bool:
         if not isinstance(value, str):
             continue
         lowered = value.casefold()
-        if any(marker in lowered for marker in _CLOSURE_MARKERS):
+        if any(_states_closure(lowered, marker) for marker in _CLOSURE_MARKERS):
             return True
+    return False
+
+
+def _states_closure(text: str, marker: str) -> bool:
+    """True when ``marker`` occurs once as a statement, not as a condition.
+
+    Open ads often say "until the vacancy has been filled"; that is not closure.
+    """
+    start = text.find(marker)
+    while start != -1:
+        if not _CONDITIONAL_PREFIX.search(text[max(0, start - 40):start]):
+            return True
+        start = text.find(marker, start + 1)
     return False
 
 

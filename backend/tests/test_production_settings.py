@@ -21,7 +21,6 @@ def production_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "environment": "production",
         "database_url": "postgresql+psycopg://prototype:placeholder@db.example/app?sslmode=require",
-        "session_cookie_secure": True,
         "search_provider": "firecrawl",
         "firecrawl_base_url": "https://api.firecrawl.dev",
         "firecrawl_api_key": "test-only-key",
@@ -35,14 +34,14 @@ def test_local_defaults_keep_searxng_and_development_cors() -> None:
     assert settings.search_provider == "searxng"
     assert "http://localhost:5173" in settings.cors_origins
     assert settings.enable_resume_ai is True
-    assert settings.discovery_daily_user_limit == 100
+    assert settings.discovery_daily_local_limit == 100
     assert settings.discovery_daily_global_limit == 1_000
 
 
 def test_hosted_defaults_disable_resume_ai_and_use_stricter_quotas() -> None:
     settings = production_settings()
     assert settings.enable_resume_ai is False
-    assert settings.discovery_daily_user_limit == 3
+    assert settings.discovery_daily_local_limit == 3
     assert settings.discovery_daily_global_limit == 20
 
 
@@ -54,9 +53,9 @@ def test_production_resume_ai_requires_explicit_enablement() -> None:
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"discovery_daily_user_limit": 0},
+        {"discovery_daily_local_limit": 0},
         {"discovery_daily_global_limit": 0},
-        {"discovery_daily_user_limit": 10_001},
+        {"discovery_daily_local_limit": 10_001},
         {"discovery_daily_global_limit": 100_001},
     ],
 )
@@ -70,7 +69,6 @@ def test_production_requires_an_explicit_database_url() -> None:
         Settings(
             _env_file=None,
             environment="production",
-            session_cookie_secure=True,
             search_provider="firecrawl",
             firecrawl_base_url="https://api.firecrawl.dev",
             firecrawl_api_key="test-only-key",
@@ -81,7 +79,6 @@ def test_production_requires_an_explicit_database_url() -> None:
     ("overrides", "message"),
     [
         ({"debug": True}, "DEBUG must be false"),
-        ({"session_cookie_secure": False}, "SESSION_COOKIE_SECURE must be true"),
         (
             {"database_url": "postgresql+psycopg://u:p@db.example/app"},
             "sslmode=require or stronger",
@@ -153,7 +150,6 @@ def test_production_accepts_valid_explicit_service_and_database_ports() -> None:
 def test_production_uses_empty_cors_default_and_keeps_secure_settings() -> None:
     settings = production_settings()
     assert settings.cors_origins == []
-    assert settings.session_cookie_secure is True
     assert settings.debug is False
 
 
@@ -167,6 +163,11 @@ def test_production_normalizes_neon_postgresql_url_for_psycopg3() -> None:
 def test_production_rejects_explicit_development_cors_origin() -> None:
     with pytest.raises(ValidationError, match="must not include development origins"):
         production_settings(cors_origins=["http://localhost:5173"])
+
+
+def test_configuration_rejects_unapproved_browser_origins() -> None:
+    with pytest.raises(ValidationError, match="supported local development origins"):
+        Settings(_env_file=None, cors_origins=["https://unrelated.example"])
 
 
 def test_production_rejects_unconfigured_searxng_provider() -> None:
@@ -210,7 +211,6 @@ def test_render_environment_variables_satisfy_explicit_production_settings(
         "CAREER_COPILOT_DATABASE_URL": (
             "postgresql://prototype:placeholder@db.example/app?sslmode=require"
         ),
-        "CAREER_COPILOT_SESSION_COOKIE_SECURE": "true",
         "CAREER_COPILOT_SEARCH_PROVIDER": "firecrawl",
         "CAREER_COPILOT_FIRECRAWL_BASE_URL": "https://api.firecrawl.dev",
         "CAREER_COPILOT_FIRECRAWL_API_KEY": "test-only-key",
@@ -225,5 +225,5 @@ def test_render_environment_variables_satisfy_explicit_production_settings(
     assert settings.database_url.startswith("postgresql+psycopg://")
     assert settings.cors_origins == []
     assert settings.enable_resume_ai is False
-    assert settings.discovery_daily_user_limit == 3
+    assert settings.discovery_daily_local_limit == 3
     assert settings.discovery_daily_global_limit == 20

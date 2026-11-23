@@ -1,0 +1,29 @@
+{
+  "architecture": "windows-x64",
+  "python": "3.13.7",
+  "pyinstaller": "6.22.3",
+  "node": "22.19.0",
+  "npm": "11.6.4",
+  "rustc": "1.100.0",
+  "cargo": "1.100.0",
+  "tauriCli": "2.12.4",
+  "postgresql": "16.16",
+  "vcRedist": {
+    "version": "14.52.37029.0",
+    "architecture": "windows-x64",
+    "url": "https://aka.ms/vc14/vc_redist.x64.exe",
+    "sha256": "9c02c9ed120f671b900e6b9471d890e3b2414117a7e53f4ae2e855466fa2b7c9",
+    "productName": "Microsoft Visual C++ v14 Redistributable (x64) - 14.52.37029",
+    "originalFilename": "VC_redist.x64.exe",
+    "signer": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+  },
+  "nsis": {
+    "version": "3.13",
+    "archiveUrl": "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip",
+    "archiveSha1": "DB14F8AF2EA346B786C6AE19343F61AAF5E09B8E",
+    "executableSha1": "6D45D4E8CCF18FE1FDAC9164058F356102A2ECF2",
+    "tauriUtilitiesVersion": "0.5.3",
+    "tauriUtilitiesUrl": "https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll",
+    "tauriUtilitiesSha1": "75197FEE3C6A814FE035788D1C34EAD39349B860"
+  }
+}

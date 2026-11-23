@@ -19,6 +19,7 @@ from app.agents.job_matching import (
     MatchResult,
     MatchSignal,
     MatchVerdict,
+    PROMPT_VERSION,
 )
 from app.models.agent_run import AgentRun
 from app.models.document import Document
@@ -506,7 +507,7 @@ def test_uploaded_master_resume_is_consumable_by_job_matching(session) -> None:
     assert envelope["candidate_id"] == str(candidate.id)
     assert envelope["resume_document_id"] == str(uploaded.document_id)
     assert envelope["job_analysis_id"] == str(analysis.id)
-    assert envelope["prompt_version"] == "job-matching-v1"
+    assert envelope["prompt_version"] == PROMPT_VERSION
     assert envelope["match"] == MATCH.model_dump(mode="json")
 
     stored = session.scalar(select(Match).where(Match.resume_document_id == uploaded.document_id))

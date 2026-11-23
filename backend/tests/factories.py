@@ -8,11 +8,7 @@ from app.models.company import Company
 from app.models.document import Document
 from app.models.enums import ApplicationStatus, CrawlStatus, DocumentKind
 from app.models.job import Job
-from app.models.user import User
-from app.services import auth as auth_service
 from app.services.normalization import canonicalize_url, normalize_company_name
-
-TEST_PASSWORD = "correct-horse-battery-staple"
 
 _counter = 0
 
@@ -24,29 +20,8 @@ def unique_suffix() -> str:
     return f"{_counter}"
 
 
-def make_user(session: Session, **overrides: object) -> User:
-    """Create an account with the known test password and a unique email."""
-    suffix = unique_suffix()
-    user = User(
-        email=overrides.pop("email", f"user{suffix}@example.com"),
-        password_hash=auth_service.hash_password(
-            overrides.pop("password", TEST_PASSWORD)
-        ),
-        **overrides,
-    )
-    session.add(user)
-    session.flush()
-    return user
-
-
 def make_candidate(session: Session, **overrides: object) -> Candidate:
     suffix = unique_suffix()
-    user = overrides.pop("user", None)
-    user_id = overrides.pop("user_id", None)
-    if user_id is None:
-        if user is None:
-            user = make_user(session)
-        user_id = user.id
     candidate = Candidate(
         name=overrides.pop("name", f"Candidate {suffix}"),
         headline=overrides.pop("headline", "AI Engineer"),
@@ -54,7 +29,6 @@ def make_candidate(session: Session, **overrides: object) -> Candidate:
         years_of_experience=overrides.pop("years_of_experience", 5.0),
         seniority=overrides.pop("seniority", "mid"),
         skills=overrides.pop("skills", ["python", "fastapi"]),
-        user_id=user_id,
         **overrides,
     )
     session.add(candidate)

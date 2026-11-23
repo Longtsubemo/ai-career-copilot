@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from uuid import UUID
 
 from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -12,10 +11,11 @@ from sqlalchemy.orm import Session
 from app.models.discovery_daily_usage import DiscoveryDailyUsage
 
 GLOBAL_SCOPE = "global"
+LOCAL_SCOPE = "local"
 
 
 class DailyProviderLimitExceeded(RuntimeError):
-    """The per-user or global daily provider-operation budget is exhausted."""
+    """The per-installation or global daily provider-operation budget is exhausted."""
 
 
 # Kept as an alias for callers that used the original discovery-only name.
@@ -54,8 +54,7 @@ def _increment_if_below(
 def reserve_provider_attempt(
     session: Session,
     *,
-    user_id: UUID,
-    user_limit: int,
+    local_limit: int,
     global_limit: int,
     now: datetime | None = None,
 ) -> date:
@@ -71,7 +70,7 @@ def reserve_provider_attempt(
     one unit. These counters limit application operations rather than exact
     HTTP request volume.
     """
-    if user_limit < 1 or global_limit < 1:
+    if local_limit < 1 or global_limit < 1:
         raise ValueError("provider-operation limits must be positive")
     day = utc_day(now)
     try:
@@ -80,13 +79,13 @@ def reserve_provider_attempt(
                 DiscoveryDailyUsage.usage_date < day
             )
         )
-        user_attempts = _increment_if_below(
+        local_attempts = _increment_if_below(
             session,
             day=day,
-            scope_key=f"user:{user_id}",
-            limit=user_limit,
+            scope_key=LOCAL_SCOPE,
+            limit=local_limit,
         )
-        if user_attempts is None:
+        if local_attempts is None:
             raise DailyProviderLimitExceeded
         global_attempts = _increment_if_below(
             session,
@@ -109,6 +108,7 @@ __all__ = [
     "DiscoveryDailyLimitExceeded",
     "DailyProviderLimitExceeded",
     "GLOBAL_SCOPE",
+    "LOCAL_SCOPE",
     "reserve_provider_attempt",
     "utc_day",
 ]

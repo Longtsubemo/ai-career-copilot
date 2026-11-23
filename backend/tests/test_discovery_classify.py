@@ -145,6 +145,28 @@ class TestClosureEvidence:
         )
         assert has_closure_evidence(crawl) is False
 
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "Applications are reviewed until the vacancy has been filled.",
+            "We will contact you once the position has been filled.",
+            "Apply before this job has closed.",
+        ],
+    )
+    def test_conditional_closure_phrases_are_not_closure(self, phrase: str) -> None:
+        crawl = crawl_result("https://example.com/x", markdown=f"# Role\n\n{phrase}")
+        assert has_closure_evidence(crawl) is False
+
+    def test_a_stated_closure_wins_over_a_conditional_one(self) -> None:
+        crawl = crawl_result(
+            "https://example.com/x",
+            markdown=(
+                "# Role\n\nOpen until the position has been filled.\n\n"
+                "Update: this position has been filled."
+            ),
+        )
+        assert has_closure_evidence(crawl) is True
+
     def test_none_crawl_has_no_closure_evidence(self) -> None:
         assert has_closure_evidence(None) is False
 

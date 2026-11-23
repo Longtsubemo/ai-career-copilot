@@ -1,0 +1,20 @@
+{
+  "installer": "C:\\Users\\longt\\Desktop\\projects\\ai-career-copilot\\backend\\artifacts\\installers\\Stage4B-local-api-capability-v2\\AI-Career-Copilot-Setup-0.1.0-x64.exe",
+  "installerBytes": 70167142,
+  "sha256": "d51558e048e935db495d28590982877508f4da0d9accf096ae63dc55b226ee2b",
+  "manifestHashMatches": true,
+  "sidecarMatches": true,
+  "runtimeManifestMatches": true,
+  "postgresManifestMatches": true,
+  "installerSignatureStatus": "NotSigned",
+  "codeSigned": false,
+  "tauriCliVersion": "2.12.4",
+  "nsisVersion": "3.13",
+  "existingProductRegistration": "AI Career Copilot at C:\\Program Files\\AI Career Copilot",
+  "visualCRuntimeHostVersion": "v14.51.36247.00",
+  "visualCRuntimeBundledVersion": "14.52.37029.0",
+  "hostElevated": false,
+  "windowsSandboxAvailable": false,
+  "hyperVGetVmAvailable": false,
+  "vcRedistSignerStatus": "Valid"
+}

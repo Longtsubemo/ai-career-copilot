@@ -1,0 +1,12 @@
+{
+  "closeRequested": true,
+  "appExited": true,
+  "ownedPidsBefore": [
+    25360,
+    2204
+  ],
+  "ownedProcessesRemaining": 0,
+  "dbFilesRemain": true,
+  "profileDataDirExists": true,
+  "artifacts": "C:\\Users\\longt\\Desktop\\projects\\ai-career-copilot\\backend\\artifacts\\verification\\stage4b-relaunch-b07b62446a4247638ab16f93f70dcf18"
+}

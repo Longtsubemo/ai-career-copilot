@@ -1,0 +1,14 @@
+{
+  "closeRequested": true,
+  "appExited": true,
+  "ownedProcessIdsBefore": [
+    22596,
+    26248
+  ],
+  "ownedProcessIdsRemaining": [],
+  "apiListenersAfterClose": [],
+  "postgresListenersAfterClose": [],
+  "postgresShutdownLogLine": "2026-11-15 22:18:52.248 IST [26660] LOG:  database system is shut down",
+  "syntheticDataRetained": true,
+  "backupCount": 1
+}

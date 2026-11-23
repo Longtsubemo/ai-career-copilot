@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from app.api.deps import NO_CANDIDATE_DETAIL, NO_MASTER_RESUME_DETAIL
+from app.api.deps import NO_MASTER_RESUME_DETAIL
 from app.core.config import Settings
 from app.models.document import Document
 from app.models.enums import DocumentKind
@@ -14,9 +14,8 @@ from app.services.resume_upload import MAX_RESUME_BYTES
 from tests.api.support import (
     RESUME_TEXT,
     build_candidate,
-    login,
-    make_user_client,
-    register,
+    make_local_client,
+    initialize_local_profile,
 )
 from tests.resume_fixtures import (
     make_docx_bytes,
@@ -30,20 +29,20 @@ _DOCX_MIME = (
 
 
 def _sign_up(client) -> str:
-    register(client)
+    initialize_local_profile(client)
     response = client.get("/api/candidates/me")
     assert response.status_code == 200
     return response.json()["id"]
 
 
-def test_upload_requires_authentication(client, session):
+def test_resume_upload_works_without_a_login(client, session):
     response = client.post(
         "/api/resumes/master",
         files={"file": ("resume.txt", b"experience", "text/plain")},
     )
 
-    assert response.status_code == 401
-    assert session.execute(select(Document)).scalars().all() == []
+    assert response.status_code == 201
+    assert session.execute(select(Document)).scalars().one().candidate_id
 
 
 def test_resume_upload_is_disabled_without_storing_content(
@@ -51,7 +50,6 @@ def test_resume_upload_is_disabled_without_storing_content(
 ):
     candidate = build_candidate(session)
     client = client_factory()
-    login(client, candidate.user)
     monkeypatch.setattr(
         "app.api.deps.get_settings",
         lambda: Settings(_env_file=None, enable_resume_ai=False),
@@ -68,17 +66,17 @@ def test_resume_upload_is_disabled_without_storing_content(
     assert session.execute(select(Document)).scalars().all() == []
 
 
-def test_upload_requires_a_candidate(client_factory, session):
-    client, _ = make_user_client(client_factory, session)
+def test_first_resume_operation_initializes_the_local_profile(client_factory, session):
+    client, _ = make_local_client(client_factory, session)
 
     response = client.post(
         "/api/resumes/master",
-        files={"file": ("resume.txt", b"experience", "text/plain")},
+        files={"file": ("resume.txt", RESUME_TEXT.encode(), "text/plain")},
     )
 
-    assert response.status_code == 404
-    assert response.json()["detail"] == NO_CANDIDATE_DETAIL
-    assert session.execute(select(Document)).scalars().all() == []
+    assert response.status_code == 201
+    assert response.json()["candidate_id"]
+    assert session.execute(select(Document)).scalars().one().candidate_id
 
 
 def test_upload_then_read_current_master_resume(client, session):
@@ -381,24 +379,24 @@ def test_pdf_that_does_not_match_its_content_is_rejected(client):
     assert response.status_code == 415
 
 
-def test_upload_requires_authentication_for_pdf(client, session):
+def test_pdf_upload_works_without_an_account(client, session):
     response = client.post(
         "/api/resumes/master",
         files={"file": ("resume.pdf", make_pdf_bytes("Ada"), "application/pdf")},
     )
 
-    assert response.status_code == 401
-    assert session.execute(select(Document)).scalars().all() == []
+    assert response.status_code == 201
+    assert session.execute(select(Document)).scalars().one().candidate_id
 
 
 def test_a_pdf_upload_belongs_to_the_authenticated_candidate(
     client_factory, session
 ):
     account = build_candidate(session, name="Ada")
+    account.is_local_profile = True
+    session.flush()
     other = build_candidate(session, name="Grace")
     client = client_factory()
-    login(client, account.user)
-
     response = client.post(
         "/api/resumes/master",
         files={"file": ("resume.pdf", make_pdf_bytes("Ada"), "application/pdf")},

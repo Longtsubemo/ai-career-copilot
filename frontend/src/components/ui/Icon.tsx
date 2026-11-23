@@ -29,13 +29,6 @@ const PATHS = {
   ),
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
-  logout: (
-    <>
-      <path d="M15 4h3a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-3" />
-      <path d="M10 12h9" />
-      <path d="m13 8.5 3.5 3.5-3.5 3.5" />
-    </>
-  ),
   external: (
     <>
       <path d="M14 4h6v6" />

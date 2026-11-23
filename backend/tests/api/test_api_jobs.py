@@ -13,8 +13,8 @@ from app.core.config import Settings
 from app.models.discovery_daily_usage import DiscoveryDailyUsage
 from app.models.enums import AvailabilityStatus
 from app.services.discovery_quota import utc_day
-from tests.api.support import login, make_user_client
-from tests.factories import make_job, make_company, make_user
+from tests.api.support import make_local_client
+from tests.factories import make_job, make_company
 from tests.fake_clients import FakeFirecrawlClient, crawl_result
 
 
@@ -340,20 +340,20 @@ def test_invalid_availability_value_is_422(client, session):
     assert client.get("/api/jobs", params={"availability": "hiring"}).status_code == 422
 
 
-def test_verify_requires_an_authenticated_session(client_factory, session):
+def test_verify_works_without_an_account(client_factory, session):
     job = make_job(session, company=make_company(session))
     firecrawl = FakeFirecrawlClient()
     client = client_factory(firecrawl=firecrawl)
 
     response = client.post(f"/api/jobs/{job.id}/verify")
 
-    assert response.status_code == 401
-    assert firecrawl.requested == []
-    assert session.scalar(select(func.count()).select_from(DiscoveryDailyUsage)) == 0
+    assert response.status_code == 200
+    assert firecrawl.requested
+    assert session.scalar(select(func.count()).select_from(DiscoveryDailyUsage)) == 2
 
 
 def test_verify_unknown_job_is_404(client_factory, session):
-    client, _ = make_user_client(client_factory, session)
+    client, _ = make_local_client(client_factory, session)
 
     response = client.post(f"/api/jobs/{uuid4()}/verify")
 
@@ -361,7 +361,6 @@ def test_verify_unknown_job_is_404(client_factory, session):
 
 
 def test_verify_credible_page_updates_availability(client_factory, session):
-    user = make_user(session)
     job = make_job(
         session,
         company=make_company(session),
@@ -371,8 +370,6 @@ def test_verify_credible_page_updates_availability(client_factory, session):
         {job.job_url: crawl_result(job.job_url, markdown="# AI Engineer")}
     )
     client = client_factory(firecrawl=fake)
-    login(client, user)
-
     response = client.post(f"/api/jobs/{job.id}/verify")
 
     assert response.status_code == 200
@@ -392,11 +389,10 @@ def test_verify_failure_preserves_state_and_counts_quota_attempt(
         "app.api.routes.jobs.get_settings",
         lambda: Settings(
             _env_file=None,
-            discovery_daily_user_limit=5,
+            discovery_daily_local_limit=5,
             discovery_daily_global_limit=5,
         ),
     )
-    user = make_user(session)
     now = datetime.now(timezone.utc)
     job = make_job(
         session,
@@ -409,8 +405,6 @@ def test_verify_failure_preserves_state_and_counts_quota_attempt(
         {job.job_url: FirecrawlError("scrape returned HTTP 404", status_code=404, kind="http_error")}
     )
     client = client_factory(firecrawl=fake)
-    login(client, user)
-
     response = client.post(f"/api/jobs/{job.id}/verify")
 
     assert response.status_code == 200
@@ -420,13 +414,11 @@ def test_verify_failure_preserves_state_and_counts_quota_attempt(
     assert body["job"]["last_verified_at"] is not None
     assert "preserved" in body["message"]
     assert fake.requested == [job.job_url]
-    assert session.get(
-        DiscoveryDailyUsage, (utc_day(), f"user:{user.id}")
-    ).attempts == 1
+    assert session.get(DiscoveryDailyUsage, (utc_day(), "local")).attempts == 1
     assert session.get(DiscoveryDailyUsage, (utc_day(), "global")).attempts == 1
 
 
-@pytest.mark.parametrize("scope", ["user", "global"])
+@pytest.mark.parametrize("scope", ["local", "global"])
 def test_verify_rejects_exhausted_quota_before_firecrawl(
     client_factory, session, monkeypatch, scope
 ):
@@ -434,23 +426,19 @@ def test_verify_rejects_exhausted_quota_before_firecrawl(
         "app.api.routes.jobs.get_settings",
         lambda: Settings(
             _env_file=None,
-            discovery_daily_user_limit=1,
+            discovery_daily_local_limit=1,
             discovery_daily_global_limit=1,
         ),
     )
-    user = make_user(session)
     job = make_job(session, company=make_company(session))
-    quota_scope = "global" if scope == "global" else f"user:{user.id}"
     session.add(
         DiscoveryDailyUsage(
-            usage_date=utc_day(), scope_key=quota_scope, attempts=1
+            usage_date=utc_day(), scope_key=scope, attempts=1
         )
     )
     session.flush()
     firecrawl = FakeFirecrawlClient()
     client = client_factory(firecrawl=firecrawl)
-    login(client, user)
-
     response = client.post(f"/api/jobs/{job.id}/verify")
 
     assert response.status_code == 429
@@ -459,7 +447,6 @@ def test_verify_rejects_exhausted_quota_before_firecrawl(
 
 
 def test_verify_closed_page_marks_job_closed(client_factory, session):
-    user = make_user(session)
     job = make_job(
         session,
         company=make_company(session),
@@ -471,8 +458,6 @@ def test_verify_closed_page_marks_job_closed(client_factory, session):
         {job.job_url: crawl_result(job.job_url, markdown="no longer accepting applications")}
     )
     client = client_factory(firecrawl=fake)
-    login(client, user)
-
     response = client.post(f"/api/jobs/{job.id}/verify")
 
     body = response.json()
@@ -482,12 +467,9 @@ def test_verify_closed_page_marks_job_closed(client_factory, session):
 
 
 def test_verify_respects_the_per_job_cooldown(client_factory, session):
-    user = make_user(session)
     job = make_job(session, company=make_company(session), job_url="https://jobs.example.com/openings/104")
     fake = FakeFirecrawlClient({job.job_url: crawl_result(job.job_url, markdown="# AI Engineer")})
     client = client_factory(firecrawl=fake)
-    login(client, user)
-
     first = client.post(f"/api/jobs/{job.id}/verify")
     second = client.post(f"/api/jobs/{job.id}/verify")
 
@@ -498,7 +480,6 @@ def test_verify_respects_the_per_job_cooldown(client_factory, session):
 
 
 def test_verify_never_scrapes_a_substituted_url(client_factory, session):
-    user = make_user(session)
     job = make_job(
         session,
         company=make_company(session),
@@ -506,8 +487,6 @@ def test_verify_never_scrapes_a_substituted_url(client_factory, session):
     )
     fake = FakeFirecrawlClient()
     client = client_factory(firecrawl=fake)
-    login(client, user)
-
     response = client.post(f"/api/jobs/{job.id}/verify?url=https://evil.example.com")
 
     assert response.status_code == 200 or response.status_code == 429

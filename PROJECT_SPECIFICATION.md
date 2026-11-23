@@ -1,5 +1,11 @@
 # AI Career Copilot
 
+> **Status:** This document preserves the project's original proposal and is
+> not the current implementation specification. The application uses
+> PostgreSQL (not SQLite), and current capabilities and setup instructions are
+> documented in [README.md](README.md). The Windows desktop runtime foundation
+> and its limitations are described in [docs/DESKTOP_RUNTIME.md](docs/DESKTOP_RUNTIME.md).
+
 ## Project Overview
 
 AI Career Copilot is a full-stack AI-powered job application assistant
@@ -33,7 +39,7 @@ keeping the final application decision under the user's control.
 -   Python 3.12
 -   FastAPI
 -   SQLAlchemy
--   SQLite
+-   PostgreSQL 16 with Psycopg 3 and Alembic
 -   Pydantic
 -   Playwright
 
@@ -73,7 +79,8 @@ Use Playwright to:
     -   Job description
     -   Job URL
 
-Store results in SQLite and avoid duplicates.
+Store results in PostgreSQL and avoid duplicates. SQLite is not a supported
+database backend in the current application.
 
 ------------------------------------------------------------------------
 

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from app.api.errors import INTERNAL_ERROR_MESSAGE
-from tests.api.support import login
-from tests.factories import make_user
 
 
 def test_unknown_path_is_a_json_404(client):
@@ -16,22 +14,25 @@ def test_unknown_path_is_a_json_404(client):
 
 
 def test_validation_failures_are_422_with_a_detail_list(client_factory, session):
-    client = _authenticated(client_factory, session)
+    client = _make_client(client_factory)
 
-    response = client.post("/api/candidates", json={"name": 42})
+    response = client.patch(
+        "/api/candidates/me",
+        json={"name": 7, "years_of_experience": "not-a-number"},
+    )
 
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert isinstance(detail, list)
-    assert detail[0]["loc"] == ["body", "name"]
+    assert ["body", "name"] in [error["loc"] for error in detail]
 
 
 def test_unexpected_errors_are_opaque_500s(client_factory, session, monkeypatch):
     def explode(*args, **kwargs):
         raise RuntimeError("secret-token-xyz")
 
-    monkeypatch.setattr("app.services.candidates.candidate_for_user", explode)
-    client = _authenticated(client_factory, session, raise_server_exceptions=False)
+    monkeypatch.setattr("app.services.candidates.get_local_candidate", explode)
+    client = _make_client(client_factory, raise_server_exceptions=False)
 
     response = client.get("/api/candidates/me")
 
@@ -42,9 +43,8 @@ def test_unexpected_errors_are_opaque_500s(client_factory, session, monkeypatch)
     assert "File \"" not in response.text
 
 
-def _authenticated(client_factory, session, **kwargs):
+def _make_client(client_factory, **kwargs):
     client = client_factory(**kwargs)
-    login(client, make_user(session))
     return client
 
 
@@ -61,7 +61,6 @@ def test_openapi_documents_every_endpoint_group(client):
     assert response.status_code == 200
     paths = response.json()["paths"]
     for path in (
-        "/api/candidates",
         "/api/candidates/me",
         "/api/resumes/master",
         "/api/resumes/master/history",

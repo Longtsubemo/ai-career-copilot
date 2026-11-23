@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI Career Copilot",
+  "version": "0.1.0",
+  "identifier": "com.aicareercopilot.desktop",
+  "build": {
+    "beforeDevCommand": "npm run build && npm run dev -- --host localhost --port 5173 --strictPort",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AI Career Copilot",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; connect-src 'self' ipc: http://ipc.localhost http://localhost:* ws://localhost:5173 http://tauri.localhost:*; object-src 'none'; base-uri 'self'; form-action 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "publisher": "AI Career Copilot",
+    "shortDescription": "A local job-search workflow",
+    "resources": {
+      "../../backend/artifacts/packaged-runtime/capability-runtime-v2/": "resources/backend/",
+      "../../resources/postgresql/16.16/windows-x64-minimal/": "resources/postgresql/16.16/windows-x64-minimal/",
+      "../../resources/vc-redist/": "resources/vc-redist/",
+      "../../resources/notices/": "resources/notices/",
+      "../dist/": "resources/frontend/dist/",
+      "windows/close_running_app.ps1": "resources/installer/close_running_app.ps1"
+    },
+    "windows": {
+      "allowDowngrades": false,
+      "bundleVCRuntime": false,
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "installMode": "perMachine",
+        "startMenuFolder": "AI Career Copilot",
+        "installerHooks": "windows/installer_hooks.nsh",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "languages": ["English"]
+      }
+    }
+  }
+}

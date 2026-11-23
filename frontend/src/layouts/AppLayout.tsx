@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 
-import { useAuth } from "../hooks/useAuth";
 import { useCandidate } from "../hooks/useCandidate";
 import { Icon, type IconName } from "../components/ui/Icon";
 
@@ -67,7 +66,6 @@ function Brand({ dark = true }: { dark?: boolean }) {
 export function AppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { candidate } = useCandidate();
-  const { user, logout } = useAuth();
 
   return (
     <div className="min-h-screen">
@@ -94,19 +92,11 @@ export function AppLayout() {
 
         <div className="border-t border-slate-800 px-5 py-4">
           <p className="truncate text-sm font-medium text-white">
-            {candidate ? candidate.name : (user?.email ?? "Your profile")}
+            {candidate?.name || "Your profile"}
           </p>
           <p className="truncate text-xs text-slate-400">
-            {candidate?.headline ?? (user?.email ?? "Single-user workspace")}
+            {candidate?.headline ?? "Local workspace"}
           </p>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white"
-          >
-            <Icon name="logout" className="h-4 w-4" />
-            Sign out
-          </button>
         </div>
       </aside>
 
@@ -140,17 +130,6 @@ export function AppLayout() {
                   {item.label}
                 </NavLink>
               ))}
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void logout();
-                }}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-              >
-                <Icon name="logout" className="h-5 w-5 shrink-0" />
-                Sign out
-              </button>
             </nav>
           ) : null}
         </header>

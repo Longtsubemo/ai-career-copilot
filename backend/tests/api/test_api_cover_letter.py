@@ -12,9 +12,9 @@ from app.core.config import Settings
 from app.models.agent_run import AgentRun
 from app.models.document import Document
 from app.models.enums import DocumentKind
-from tests.api.support import LETTER, MATCH, build_full_world, build_job, login
+from tests.api.support import LETTER, MATCH, build_full_world, build_job
 from tests.fake_clients import FakeGeminiClient, SchemaScriptedGeminiClient
-from tests.factories import make_document, make_user
+from tests.factories import make_document
 
 
 def _documents(session) -> list[Document]:
@@ -25,8 +25,6 @@ def test_generate_a_cover_letter(client_factory, session):
     world = build_full_world(session)
     gemini = FakeGeminiClient(LETTER)
     client = client_factory(gemini=gemini)
-    login(client, world.candidate.user)
-
     response = client.post(f"/api/jobs/{world.job.id}/cover-letter")
 
     assert response.status_code == 200
@@ -64,7 +62,6 @@ def test_cover_letter_is_disabled_without_gemini_or_document_write(
     world = build_full_world(session)
     gemini = FakeGeminiClient(LETTER)
     client = client_factory(gemini=gemini)
-    login(client, world.candidate.user)
     before_documents = session.scalar(select(func.count()).select_from(Document))
     monkeypatch.setattr(
         "app.api.deps.get_settings",
@@ -86,8 +83,6 @@ def test_repeated_generation_reuses_the_run_and_the_document(
     world = build_full_world(session)
     gemini = FakeGeminiClient(LETTER)
     client = client_factory(gemini=gemini)
-    login(client, world.candidate.user)
-
     first = client.post(f"/api/jobs/{world.job.id}/cover-letter").json()
     second = client.post(f"/api/jobs/{world.job.id}/cover-letter").json()
 
@@ -107,8 +102,6 @@ def test_explicit_match_id_is_honoured(client_factory, session):
     world = build_full_world(session)
     gemini = FakeGeminiClient(LETTER)
     client = client_factory(gemini=gemini)
-    login(client, world.candidate.user)
-
     response = client.post(
         f"/api/jobs/{world.job.id}/cover-letter",
         json={"match_id": str(world.match.id)},
@@ -124,8 +117,6 @@ def test_without_a_match_is_409_and_writes_nothing(client_factory, session):
     session.flush()
     gemini = FakeGeminiClient(LETTER)
     client = client_factory(gemini=gemini)
-    login(client, world.candidate.user)
-
     response = client.post(f"/api/jobs/{world.job.id}/cover-letter")
 
     assert response.status_code == 409
@@ -141,8 +132,6 @@ def test_without_a_match_is_409_and_writes_nothing(client_factory, session):
 def test_unknown_match_id_is_404(client_factory, session):
     world = build_full_world(session)
     client = client_factory(gemini=FakeGeminiClient(LETTER))
-    login(client, world.candidate.user)
-
     response = client.post(
         f"/api/jobs/{world.job.id}/cover-letter", json={"match_id": str(uuid4())}
     )
@@ -164,8 +153,6 @@ def test_a_non_master_resume_is_rejected_by_the_agent(client_factory, session):
         {MatchResult: MATCH, CoverLetterResult: LETTER}
     )
     client = client_factory(gemini=gemini)
-    login(client, world.candidate.user)
-
     matched = client.post(
         f"/api/jobs/{world.job.id}/match",
         json={"resume_document_id": str(tailored.id)},
@@ -188,22 +175,19 @@ def test_a_non_master_resume_is_rejected_by_the_agent(client_factory, session):
     )
 
 
-def test_without_a_candidate_is_404(client_factory, session):
+def test_first_launch_initializes_a_profile_before_cover_letter(client_factory, session):
     world = build_job(session)
     client = client_factory(gemini=FakeGeminiClient(LETTER))
-    login(client, make_user(session))
-
     response = client.post(f"/api/jobs/{world.job.id}/cover-letter")
 
-    assert response.status_code == 404
-    assert "POST /api/candidates" in response.json()["detail"]
+    assert response.status_code == 409
+    assert "upload one" in response.json()["detail"]
+    assert client.get("/api/candidates/me").status_code == 200
 
 
 def test_unknown_job_is_404_without_a_run(client_factory, session):
     world = build_full_world(session)
     client = client_factory(gemini=FakeGeminiClient(LETTER))
-    login(client, world.candidate.user)
-
     response = client.post(f"/api/jobs/{uuid4()}/cover-letter")
 
     assert response.status_code == 404

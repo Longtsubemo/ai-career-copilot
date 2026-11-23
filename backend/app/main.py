@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -15,8 +16,9 @@ from app.agents.discovery import register_discovery_handler
 from app.agents.job_analysis import register_job_analysis_handler
 from app.agents.job_matching import register_job_matching_handler
 from app.agents.runtime import HandlerRegistry
-from app.api.csrf import CSRFMiddleware
 from app.api.errors import register_exception_handlers
+from app.api.capability import ApiCapabilityMiddleware
+from app.api.origin import LOCAL_HOSTS, LocalOriginMiddleware
 from app.api.router import api_router
 from app.clients.firecrawl import FirecrawlClient
 from app.core.config import get_settings
@@ -32,9 +34,13 @@ DEFAULT_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist
 class _SPAStaticFiles(StaticFiles):
     """Serve the Vite entrypoint for browser routes, never for API paths."""
 
+    def __init__(self, *args, desktop_mode: bool = False, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.desktop_mode = desktop_mode
+
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
@@ -42,7 +48,15 @@ class _SPAStaticFiles(StaticFiles):
                 return JSONResponse(status_code=404, content={"detail": "Not Found"})
             if scope["method"] not in {"GET", "HEAD"}:
                 raise
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+        if self.desktop_mode:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                "connect-src 'self'; object-src 'none'; base-uri 'self'; "
+                "form-action 'self'"
+            )
+        return response
 
 
 def create_app(
@@ -51,6 +65,7 @@ def create_app(
     firecrawl: FirecrawlClient | None = None,
     gemini: GeminiClient | None = None,
     frontend_dist_dir: str | Path | None = None,
+    api_capability: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -67,20 +82,32 @@ def create_app(
         title=settings.app_name,
         debug=settings.debug,
         version=settings.app_version,
+        docs_url=None if settings.runtime_mode == "desktop" else "/docs",
+        redoc_url=None if settings.runtime_mode == "desktop" else "/redoc",
+        openapi_url=None if settings.runtime_mode == "desktop" else "/openapi.json",
     )
     app.include_router(api_router)
     register_exception_handlers(app)
 
-    app.add_middleware(CSRFMiddleware)
+    if settings.runtime_mode == "desktop":
+        app.add_middleware(
+            ApiCapabilityMiddleware,
+            api_capability=api_capability,
+        )
+
+    app.add_middleware(LocalOriginMiddleware)
 
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_credentials=False,
+            allow_methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=["Accept", "Authorization", "Content-Type"],
         )
+
+    # Outermost: a rebound DNS name aimed at loopback carries a foreign Host.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(LOCAL_HOSTS))
 
     registry = HandlerRegistry()
     firecrawl_client = firecrawl or FirecrawlClient(
@@ -96,6 +123,8 @@ def create_app(
     static_dir: Path | None = None
     if frontend_dist_dir is not None:
         static_dir = Path(frontend_dist_dir)
+    elif settings.runtime_mode == "desktop":
+        static_dir = Path(settings.frontend_dist_dir) if settings.frontend_dist_dir else DEFAULT_FRONTEND_DIST
     elif settings.environment.casefold() == "production":
         static_dir = DEFAULT_FRONTEND_DIST
 
@@ -123,7 +152,11 @@ def create_app(
         # serves index.html for client-side routes when html=True.
         app.mount(
             "/",
-            _SPAStaticFiles(directory=str(static_dir), html=True),
+            _SPAStaticFiles(
+                directory=str(static_dir),
+                html=True,
+                desktop_mode=settings.runtime_mode == "desktop",
+            ),
             name="frontend",
         )
 

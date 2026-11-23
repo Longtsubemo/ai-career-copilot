@@ -296,6 +296,18 @@ class TestContract:
             != key
         )
 
+    def test_v5_idempotency_scope_is_distinct_from_historical_v4(self) -> None:
+        job_id, candidate_id, resume_id = uuid4(), uuid4(), uuid4()
+        v4_key = job_matching_idempotency_key(
+            job_id, candidate_id, resume_id, "job-matching-v4"
+        )
+        v5_key = job_matching_idempotency_key(
+            job_id, candidate_id, resume_id, PROMPT_VERSION
+        )
+
+        assert PROMPT_VERSION == "job-matching-v5"
+        assert v4_key != v5_key
+
 
 class TestMatchResult:
     def test_result_round_trips_through_json(self) -> None:
@@ -371,8 +383,8 @@ class TestMatchResult:
 
 
 class TestPrompt:
-    def test_prompt_version_is_the_agreed_v1(self) -> None:
-        assert PROMPT_VERSION == "job-matching-v1"
+    def test_prompt_version_is_the_agreed_v5(self) -> None:
+        assert PROMPT_VERSION == "job-matching-v5"
 
     def test_prompt_contains_job_evidence(self) -> None:
         prompt = build_matching_prompt(**PROMPT_ARGS)
@@ -428,6 +440,353 @@ class TestPrompt:
         assert "required skills more heavily" in SYSTEM_INSTRUCTION
         assert "unclear" in SYSTEM_INSTRUCTION
         assert "Return only the JSON object" in SYSTEM_INSTRUCTION
+
+    def test_required_qualifications_are_named_as_individual_gaps(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "qualifications": [
+                        "CPA license is required",
+                        "Three years of nonprofit audit experience required",
+                    ],
+                },
+                "resume_content": "Prepared nonprofit financial reports.",
+            }
+        )
+
+        assert '"cpa license is required"' in prompt.casefold()
+        assert (
+            '"three years of nonprofit audit experience required"'
+            in prompt.casefold()
+        )
+        assert "for each explicitly mandatory qualification" in instruction
+        assert "a separate, specific entry to \"gaps\"" in instruction
+        assert (
+            "do not collapse distinct qualifications into a generic statement"
+            in instruction
+        )
+        assert (
+            "do not assume every item in a generic \"qualifications\" or "
+            "\"certifications\" list is mandatory"
+        ) in instruction
+
+    def test_preferred_qualifications_are_not_treated_as_mandatory(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "preferred_skills": ["Power BI"],
+                },
+            }
+        )
+
+        assert '"power bi"' in prompt.casefold()
+        assert 'items in "preferred_skills" are preferred' in instruction
+        assert "preferred or nice-to-have remains preferred" in instruction
+        assert (
+            "do not present preferred qualifications as mandatory gaps"
+            in instruction
+        )
+        assert "only as a minor consideration" in instruction
+
+    def test_unclassified_qualification_status_is_preserved_as_unclear(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "qualifications": ["Production GPU training experience"],
+                },
+            }
+        )
+
+        assert '"production gpu training experience"' in prompt.casefold()
+        assert (
+            "if a listed qualification's status is unclear, preserve that uncertainty"
+            in instruction
+        )
+        assert "name it individually in \"gaps\"" in instruction
+        assert "without treating it as essential" in instruction
+
+    def test_structured_requirement_policy_is_authoritative_and_category_aware(self) -> None:
+        analysis = {
+            **ANALYSIS_PAYLOAD,
+            "required_skills": ["Python", "Terraform"],
+            "preferred_skills": ["Terraform"],
+            "requirement_items": [
+                {
+                    "item": "Terraform",
+                    "category": "skill",
+                    "status": "preferred",
+                    "evidence": ["Terraform experience is preferred."],
+                },
+                {
+                    "item": "PMP certification",
+                    "category": "certification",
+                    "status": "unclear",
+                    "evidence": ["PMP certification"],
+                },
+                {
+                    "item": "CPA license",
+                    "category": "qualification",
+                    "status": "required",
+                    "evidence": ["CPA license is required."],
+                },
+            ],
+        }
+        prompt = build_matching_prompt(**{**PROMPT_ARGS, "analysis": analysis})
+        normalized = " ".join(prompt.split()).casefold()
+
+        assert '"requirement_items"' in prompt
+        assert "requirement status policy: structured items present" in normalized
+        assert "structured status overrides contradictory legacy arrays" in normalized
+        assert "unclear remains uncertain" in normalized
+        assert "must not be placed in either missing-skills list" in normalized
+        assert "name each unsupported required non-skill item separately in gaps" in normalized
+        assert '"status": "preferred"' in prompt
+        assert '"status": "unclear"' in prompt
+        assert '"status": "required"' in prompt
+
+    @pytest.mark.parametrize("requirement_items", [None, []])
+    def test_absent_or_empty_structured_items_keep_legacy_prompt_mode(
+        self, requirement_items
+    ) -> None:
+        analysis = dict(ANALYSIS_PAYLOAD)
+        if requirement_items is not None:
+            analysis["requirement_items"] = requirement_items
+
+        prompt = build_matching_prompt(**{**PROMPT_ARGS, "analysis": analysis})
+        normalized = " ".join(prompt.split()).casefold()
+
+        assert "requirement status policy: legacy analysis" in normalized
+        assert "preserve the v4 legacy behavior" in normalized
+        assert "structured items present" not in normalized
+
+    def test_related_technical_capabilities_are_not_substituted(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+
+        assert "gpu inference is not gpu training" in instruction
+        assert "model serving is not model training or fine-tuning" in instruction
+        assert "distributed inference is not distributed training" in instruction
+        assert "model deployment is not model development" in instruction
+        assert "acknowledge related work as transferable experience" in instruction
+
+    def test_requirement_guidance_applies_to_non_ai_roles(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            job_title="Staff Accountant",
+            company_name="Example Finance",
+            job_location="Remote",
+            employment_type="Full-time",
+            experience_level="3+ years",
+            analysis={
+                "summary": "Prepare financial reports and support audits.",
+                "required_skills": ["financial reporting"],
+                "preferred_skills": ["Power BI"],
+                "qualifications": ["CPA license required"],
+            },
+            candidate_name="Ada Lovelace",
+            resume_kind="master_resume",
+            resume_content="Prepared financial reports and audit schedules.",
+        )
+
+        assert '"cpa license required"' in prompt.casefold()
+        assert '"power bi"' in prompt.casefold()
+        assert "for any role" in instruction
+        assert (
+            "these examples do not make ai or gpu experience a universal requirement"
+            in instruction
+        )
+
+    def test_system_instruction_distinguishes_missing_from_absent_evidence(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split())
+        assert '"not evidenced"' in instruction
+        assert "an omission means its status is unknown" in instruction
+        assert (
+            "only when supplied evidence explicitly establishes absence"
+            in instruction
+        )
+
+    def test_education_without_requirement_or_evidence_is_unclear(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {**ANALYSIS_PAYLOAD, "education_requirements": []},
+                "resume_content": "Built backend services and data pipelines.",
+            }
+        )
+
+        assert '"education_requirements": []' in prompt
+        assert (
+            'if no education requirement and no candidate education evidence are supplied, '
+            'use "unclear" because the schema has no "not_applicable" value'
+            in instruction
+        )
+        assert '"not_applicable"' in instruction
+
+    def test_stated_education_requirement_with_insufficient_evidence_is_unclear(
+        self,
+    ) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "resume_content": "Built backend services and data pipelines.",
+            }
+        )
+
+        assert "bachelor's degree" in prompt.casefold()
+        assert (
+            "when a stated requirement is supported by candidate evidence"
+            in instruction
+        )
+        assert (
+            "when the requirement exists but the evidence is insufficient"
+            in instruction
+        )
+        assert 'use "unclear"' in instruction
+
+    def test_generic_total_years_and_skill_evidence_are_separate(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "experience_years_min": 5,
+                    "required_skills": ["production GPU training"],
+                },
+                "years_of_experience": 5,
+                "resume_content": "Five years in analytics and backend reporting.",
+            }
+        )
+
+        assert '"experience_years_min": 5' in prompt
+        assert '"production GPU training"' in prompt
+        assert "assess experience separately from skill signals" in instruction
+        assert 'when it meets or exceeds the minimum, use "matched"' in instruction
+        assert "even if a required technical skill is not evidenced" in instruction
+
+    def test_explicit_relevant_experience_requires_role_or_domain_evidence(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "qualifications": ["5 years of recommender systems experience"],
+                },
+                "years_of_experience": 5,
+                "resume_content": "Five years of general analytics experience.",
+            }
+        )
+
+        prompt = prompt.casefold()
+        assert "5 years of recommender systems experience" in prompt
+        assert "five years of general analytics experience" in prompt
+        assert (
+            "explicit years-in-role, domain, or technology requirement"
+            in instruction
+        )
+        assert "assess only experience supported as relevant" in instruction
+        assert "unrelated tenure does not satisfy it" in instruction
+
+    def test_unmentioned_skill_is_not_evidence_of_confirmed_absence(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "analysis": {
+                    **ANALYSIS_PAYLOAD,
+                    "required_skills": ["Kubernetes"],
+                },
+                "resume_content": "Built backend services with Python.",
+            }
+        )
+
+        prompt = prompt.casefold()
+        assert '"kubernetes"' in prompt
+        assert "built backend services with python" in prompt
+        assert "if a skill or qualification is not mentioned" in instruction
+        assert 'describe it as "not evidenced"' in instruction
+        assert 'use "does not have" or "lacks"' in instruction
+        assert (
+            "only when supplied evidence explicitly establishes absence"
+            in instruction
+        )
+
+    def test_explicit_negative_evidence_can_support_an_absence_statement(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        prompt = build_matching_prompt(
+            **{
+                **PROMPT_ARGS,
+                "resume_content": "I do not hold the required Kubernetes certification.",
+            }
+        )
+
+        assert (
+            "i do not hold the required kubernetes certification"
+            in prompt.casefold()
+        )
+        assert 'use "does not have" or "lacks"' in instruction
+        assert (
+            "only when supplied evidence explicitly establishes absence"
+            in instruction
+        )
+        assert "still identify unsupported requirements" in instruction
+
+    def test_system_instruction_uses_the_job_stated_experience_requirement(self) -> None:
+        instruction = " ".join(SYSTEM_INSTRUCTION.split()).casefold()
+        assert "never invent experience" in instruction
+        assert (
+            "for a generic minimum total-years requirement, compare documented total professional tenure;"
+            in instruction
+        )
+        assert "unrelated tenure does not satisfy it" in instruction
+        assert (
+            "do not turn an unrelated skill gap into an experience mismatch"
+            in instruction
+        )
+        assert (
+            'use "unclear" when duration or relevance cannot be established'
+            in instruction
+        )
+
+    def test_matching_output_contract_remains_unchanged(self) -> None:
+        assert set(MatchResult.model_fields) == {
+            "score",
+            "verdict",
+            "matched_skills",
+            "missing_required_skills",
+            "missing_preferred_skills",
+            "strengths",
+            "gaps",
+            "experience_match",
+            "education_match",
+            "location_match",
+            "seniority_match",
+            "rationale",
+            "confidence",
+        }
+        assert {value.value for value in MatchVerdict} == {
+            "strong_match",
+            "good_match",
+            "partial_match",
+            "weak_match",
+            "poor_match",
+        }
+        assert {value.value for value in MatchSignal} == {
+            "matched",
+            "mismatched",
+            "unclear",
+        }
 
 
 class TestRegistration:
@@ -808,28 +1167,27 @@ class TestMatchingWithDatabase:
     def test_new_prompt_version_creates_new_historical_match(
         self, session, world
     ) -> None:
-        v1 = JobMatchingAgent(FakeGeminiClient(MATCH))
-        first_envelope = v1.match(
+        v3 = JobMatchingAgent(
+            FakeGeminiClient(MATCH), prompt_version="job-matching-v3"
+        )
+        first_envelope = v3.match(
             session,
             job_id=world.job.id,
             candidate_id=world.candidate.id,
             resume_document_id=world.resume.id,
         )
 
-        v2 = JobMatchingAgent(
-            FakeGeminiClient(MATCH_V2, model="gemini-other"),
-            prompt_version="job-matching-v2",
-        )
-        second_envelope = v2.match(
+        v4 = JobMatchingAgent(FakeGeminiClient(MATCH_V2, model="gemini-other"))
+        second_envelope = v4.match(
             session,
             job_id=world.job.id,
             candidate_id=world.candidate.id,
             resume_document_id=world.resume.id,
         )
 
-        assert first_envelope["prompt_version"] == PROMPT_VERSION
+        assert first_envelope["prompt_version"] == "job-matching-v3"
         assert first_envelope["match"] == MATCH.model_dump(mode="json")
-        assert second_envelope["prompt_version"] == "job-matching-v2"
+        assert second_envelope["prompt_version"] == PROMPT_VERSION
         assert second_envelope["model"] == "gemini-other"
         assert second_envelope["match"] == MATCH_V2.model_dump(mode="json")
         assert match_count(session) == 2
@@ -838,13 +1196,13 @@ class TestMatchingWithDatabase:
             select(Match).where(Match.job_id == world.job.id)
         ).all()
         by_version = {row.prompt_version: row for row in rows}
-        assert set(by_version) == {PROMPT_VERSION, "job-matching-v2"}
-        assert by_version[PROMPT_VERSION].score == 72.5
+        assert set(by_version) == {"job-matching-v3", PROMPT_VERSION}
+        assert by_version["job-matching-v3"].score == 72.5
+        assert by_version["job-matching-v3"].verdict is not None
+        assert by_version["job-matching-v3"].verdict["verdict"] == "good_match"
+        assert by_version[PROMPT_VERSION].score == 41.0
         assert by_version[PROMPT_VERSION].verdict is not None
-        assert by_version[PROMPT_VERSION].verdict["verdict"] == "good_match"
-        assert by_version["job-matching-v2"].score == 41.0
-        assert by_version["job-matching-v2"].verdict is not None
-        assert by_version["job-matching-v2"].verdict["verdict"] == "weak_match"
+        assert by_version[PROMPT_VERSION].verdict["verdict"] == "weak_match"
 
     def test_conflicting_persist_keeps_the_first_writer(self, session, world) -> None:
         first = MatchResult(
@@ -900,7 +1258,7 @@ class TestMatchingWithDatabase:
         fake = FakeGeminiClient(GeminiError("quota exceeded"))
         agent = JobMatchingAgent(fake)
 
-        with pytest.raises(GeminiError, match="quota exceeded"):
+        with pytest.raises(GeminiError, match="Gemini request failed"):
             agent.match(
                 session,
                 job_id=world.job.id,
@@ -916,7 +1274,7 @@ class TestMatchingWithDatabase:
         api = RecordingGeminiApi(parsed=None, text=json.dumps(payload))
         agent = JobMatchingAgent(GeminiClient("gemini-3.8-flash", api=api))
 
-        with pytest.raises(GeminiError, match="does not match the expected schema"):
+        with pytest.raises(GeminiError, match="Gemini returned unusable structured output"):
             agent.match(
                 session,
                 job_id=world.job.id,
@@ -933,7 +1291,7 @@ class TestMatchingWithDatabase:
         api = RecordingGeminiApi(parsed=None, text='{"score": 50}')
         agent = JobMatchingAgent(GeminiClient("gemini-3.8-flash", api=api))
 
-        with pytest.raises(GeminiError, match="does not match the expected schema"):
+        with pytest.raises(GeminiError, match="Gemini returned unusable structured output"):
             agent.match(
                 session,
                 job_id=world.job.id,

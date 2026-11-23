@@ -244,32 +244,32 @@ def test_new_prompt_version_creates_a_second_run_and_analysis_row(
     finished_v1 = runtime.run_next(agent_name=JOB_ANALYSIS_AGENT_NAME)
     assert finished_v1 is not None and finished_v1.status == RunStatus.succeeded
 
-    v2_registry = HandlerRegistry()
+    next_registry = HandlerRegistry()
     register_job_analysis_handler(
-        v2_registry,
+        next_registry,
         gemini=FakeGeminiClient(ANALYSIS),
-        prompt_version="job-analysis-v2",
+        prompt_version="job-analysis-v3",
     )
-    v2_runtime = AgentRuntime(session, registry=v2_registry)
-    v2_run = v2_runtime.create_run(
+    next_runtime = AgentRuntime(session, registry=next_registry)
+    next_run = next_runtime.create_run(
         agent_name=JOB_ANALYSIS_AGENT_NAME,
-        idempotency_key=job_analysis_idempotency_key(job.id, "job-analysis-v2"),
+        idempotency_key=job_analysis_idempotency_key(job.id, "job-analysis-v3"),
         input={"job_id": str(job.id)},
     )
-    finished_v2 = v2_runtime.run_next(agent_name=JOB_ANALYSIS_AGENT_NAME)
+    finished_next = next_runtime.run_next(agent_name=JOB_ANALYSIS_AGENT_NAME)
 
-    assert finished_v2 is not None and finished_v2.status == RunStatus.succeeded
-    assert v2_run.id != v1_run.id
-    assert finished_v2.output is not None
-    assert finished_v2.output["prompt_version"] == "job-analysis-v2"
-    assert finished_v2.output["analysis"] == ANALYSIS.model_dump(mode="json")
+    assert finished_next is not None and finished_next.status == RunStatus.succeeded
+    assert next_run.id != v1_run.id
+    assert finished_next.output is not None
+    assert finished_next.output["prompt_version"] == "job-analysis-v3"
+    assert finished_next.output["analysis"] == ANALYSIS.model_dump(mode="json")
 
     versions = set(
         session.scalars(
             select(JobAnalysis.prompt_version).where(JobAnalysis.job_id == job.id)
         ).all()
     )
-    assert versions == {PROMPT_VERSION, "job-analysis-v2"}
+    assert versions == {PROMPT_VERSION, "job-analysis-v3"}
 
 
 def test_each_app_gets_its_own_registry_with_all_agents_registered() -> None:

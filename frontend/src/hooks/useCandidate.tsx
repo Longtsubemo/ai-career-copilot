@@ -9,14 +9,12 @@ import {
 } from "react";
 
 import {
-  createCandidate,
   getCurrentCandidate,
   updateCurrentCandidate,
 } from "../api/candidates";
 import { ApiError, toApiError } from "../api/errors";
 import type {
   Candidate,
-  CandidateCreateRequest,
   CandidateUpdateRequest,
 } from "../types/api";
 
@@ -25,7 +23,6 @@ interface CandidateContextValue {
   loading: boolean;
   error: ApiError | null;
   refresh: () => Promise<void>;
-  createProfile: (payload: CandidateCreateRequest) => Promise<Candidate>;
   updateProfile: (payload: CandidateUpdateRequest) => Promise<Candidate>;
 }
 
@@ -66,13 +63,6 @@ export function CandidateProvider({ children }: { children: ReactNode }) {
     await load(false);
   }, [load]);
 
-  const createProfile = useCallback(async (payload: CandidateCreateRequest) => {
-    const created = await createCandidate(payload);
-    setCandidate(created);
-    setError(null);
-    return created;
-  }, []);
-
   const updateProfile = useCallback(async (payload: CandidateUpdateRequest) => {
     const updated = await updateCurrentCandidate(payload);
     setCandidate(updated);
@@ -81,8 +71,8 @@ export function CandidateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ candidate, loading, error, refresh, createProfile, updateProfile }),
-    [candidate, loading, error, refresh, createProfile, updateProfile],
+    () => ({ candidate, loading, error, refresh, updateProfile }),
+    [candidate, loading, error, refresh, updateProfile],
   );
 
   return (

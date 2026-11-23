@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 
 from app.agents.cover_letter import CoverLetterResult
-from app.agents.job_analysis import JobAnalysisResult
+from app.agents.job_analysis import JobAnalysisResponse
 from app.agents.job_matching import MatchResult
 from app.models.agent_run import AgentRun
 from app.models.application import Application
@@ -21,7 +21,6 @@ from tests.api.support import (
     LETTER,
     MATCH,
     build_candidate,
-    login,
 )
 from tests.fake_clients import (
     FakeFirecrawlClient,
@@ -67,7 +66,7 @@ def _pipeline_clients():
     )
     gemini = SchemaScriptedGeminiClient(
         {
-            JobAnalysisResult: ANALYSIS_RESULT,
+            JobAnalysisResponse: ANALYSIS_RESULT,
             MatchResult: MATCH,
             CoverLetterResult: LETTER,
         }
@@ -84,8 +83,6 @@ def test_full_workflow_from_profile_to_application(client_factory, session):
     client = client_factory(searxng=searxng, firecrawl=firecrawl, gemini=gemini)
 
     candidate = build_candidate(session, name="Ada Lovelace")
-    login(client, candidate.user)
-
     resume = client.post(
         "/api/resumes/master",
         files={"file": ("resume.txt", RESUME, "text/plain")},
@@ -150,7 +147,7 @@ def test_full_workflow_from_profile_to_application(client_factory, session):
     runs = session.execute(select(AgentRun)).scalars().all()
     assert {run.status for run in runs} == {RunStatus.succeeded}
     assert [call["schema"] for call in gemini.calls] == [
-        JobAnalysisResult,
+        JobAnalysisResponse,
         MatchResult,
         CoverLetterResult,
     ]
@@ -169,7 +166,6 @@ def test_rerunning_the_pipeline_changes_nothing(client_factory, session):
     client = client_factory(searxng=searxng, firecrawl=firecrawl, gemini=gemini)
 
     candidate = build_candidate(session, name="Ada Lovelace")
-    login(client, candidate.user)
     client.post(
         "/api/resumes/master",
         files={"file": ("resume.txt", RESUME, "text/plain")},

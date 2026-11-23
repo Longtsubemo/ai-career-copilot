@@ -1,44 +1,40 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
 
-import { authRedirect, isAuthRoute } from "../src/utils/authRouting.ts";
+const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+const layoutSource = await readFile(
+  new URL("../src/layouts/AppLayout.tsx", import.meta.url),
+  "utf8",
+);
+const clientSource = await readFile(
+  new URL("../src/api/client.ts", import.meta.url),
+  "utf8",
+);
+const mainSource = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
 
-describe("isAuthRoute", () => {
-  it("recognizes the login and register paths", () => {
-    assert.equal(isAuthRoute("/login"), true);
-    assert.equal(isAuthRoute("/register"), true);
-  });
-
-  it("rejects application paths", () => {
-    assert.equal(isAuthRoute("/"), false);
-    assert.equal(isAuthRoute("/jobs"), false);
-    assert.equal(isAuthRoute("/onboarding"), false);
-  });
+test("the application opens through local profile initialization into the dashboard", () => {
+  assert.match(appSource, /<CandidateProvider>/);
+  assert.match(appSource, /<Route index element=\{<DashboardPage \/>\}/);
+  assert.doesNotMatch(appSource, /LoginPage|RegisterPage|OnboardingPage|Navigate/);
 });
 
-describe("authRedirect", () => {
-  it("never redirects while the session is loading", () => {
-    assert.equal(authRedirect("loading", "/"), null);
-    assert.equal(authRedirect("loading", "/login"), null);
-  });
+test("the main navigation has no sign-in or sign-out flow", () => {
+  assert.match(layoutSource, /label: "Dashboard"/);
+  assert.match(layoutSource, /label: "Profile"/);
+  assert.doesNotMatch(layoutSource, /Sign out|logout|useAuth/);
+});
 
-  it("sends authenticated users away from auth routes", () => {
-    assert.equal(authRedirect("authenticated", "/login"), "/");
-    assert.equal(authRedirect("authenticated", "/register"), "/");
-  });
+test("API requests do not depend on cookies or CSRF tokens", () => {
+  assert.doesNotMatch(clientSource, /withCredentials|CSRF|cookie|auth:unauthorized/);
+});
 
-  it("keeps authenticated users on application routes", () => {
-    assert.equal(authRedirect("authenticated", "/"), null);
-    assert.equal(authRedirect("authenticated", "/jobs/123"), null);
-  });
-
-  it("sends unauthenticated users to login", () => {
-    assert.equal(authRedirect("unauthenticated", "/"), "/login");
-    assert.equal(authRedirect("unauthenticated", "/jobs"), "/login");
-  });
-
-  it("lets unauthenticated users reach the auth routes", () => {
-    assert.equal(authRedirect("unauthenticated", "/login"), null);
-    assert.equal(authRedirect("unauthenticated", "/register"), null);
-  });
+test("desktop API requests use an in-memory bearer capability", () => {
+  assert.match(clientSource, /installApiCapability\(capability: string\)/);
+  assert.match(clientSource, /headers\.common\.Authorization = `Bearer \$\{capability\}`/);
+  assert.match(clientSource, /delete api\.defaults\.headers\.common\.Authorization/);
+  assert.doesNotMatch(clientSource, /localStorage|sessionStorage/);
+  assert.match(mainSource, /invoke<string>\("api_capability"\)/);
+  assert.match(mainSource, /installApiCapability\(capability\)/);
+  assert.doesNotMatch(mainSource, /sessionStorage|location\.replace/);
 });

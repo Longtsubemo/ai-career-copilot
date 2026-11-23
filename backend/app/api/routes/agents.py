@@ -1,9 +1,9 @@
 """Agent endpoints: the four product agents driven synchronously.
 
-Each route validates what it can deterministically, resolves the
-authenticated account's candidate and its own resume/match, and only then
-hands the request to the Agent Runtime. Ownership is checked before a run
-exists, so a cross-user id can never reach agent execution. Nothing here
+Each route validates what it can deterministically, resolves the selected
+local profile and its resume/match, and only then hands the request to the
+Agent Runtime. Candidate scoping is checked before a run exists, so an
+unselected profile ID can never reach agent execution. Nothing here
 retries, transitions a run or writes a result directly: the run row is the
 single record of what happened, and its stored output is what a caller
 reads back on success.
@@ -46,7 +46,6 @@ from app.api.deps import (
     NO_MASTER_RESUME_DETAIL,
     ensure_resume_ai_enabled,
     get_current_candidate,
-    get_current_user,
     get_registry,
 )
 from app.api.schemas import AgentRunOut, CoverLetterHttpRequest, MatchHttpRequest
@@ -56,10 +55,10 @@ from app.models.candidate import Candidate
 from app.models.document import Document
 from app.models.job import Job
 from app.models.match import Match
-from app.models.user import User
 from app.services.discovery_quota import (
     DailyProviderLimitExceeded,
     reserve_provider_attempt,
+    utc_day,
 )
 from app.services import resume_upload
 
@@ -73,18 +72,17 @@ def _require_job(session: Session, job_id: UUID) -> Job:
     return job
 
 
-def _resolve_candidate_id(authenticated: Candidate, explicit: UUID | None) -> UUID:
-    """Return the authenticated candidate's id, rejecting a mismatched id.
+def _resolve_candidate_id(local_candidate: Candidate, explicit: UUID | None) -> UUID:
+    """Return the local profile ID, rejecting a mismatched ID.
 
-    A client may echo its own candidate id for compatibility, but any other
-    value is a 404 — the same answer as an unknown id, so the existence of
-    another account's profile is never confirmed.
+    A client may echo the selected profile ID for compatibility, but any
+    other value is a 404, the same answer as an unknown candidate.
     """
-    if explicit is not None and explicit != authenticated.id:
+    if explicit is not None and explicit != local_candidate.id:
         raise HTTPException(
             status_code=404, detail=f"candidate {explicit} does not exist"
         )
-    return authenticated.id
+    return local_candidate.id
 
 
 def _resolve_resume_id(
@@ -92,7 +90,7 @@ def _resolve_resume_id(
 ) -> UUID:
     """Return the resume document this request acts for.
 
-    An explicit id must exist and be owned by the authenticated candidate;
+    An explicit id must exist and belong to the selected local profile;
     anything else is a 404 raised before a run is created. The document's
     kind remains the agent's precondition to enforce. Without an explicit
     id the candidate's current master resume is used, which is a 409 — an
@@ -121,7 +119,7 @@ def _resolve_match_id(
 ) -> UUID:
     """Return the match this letter is grounded in.
 
-    An explicit id must exist, belong to the authenticated candidate and
+    An explicit id must exist, belong to the selected local profile and
     name the same job; anything else is a 404 before a run is created.
     Otherwise the newest match already computed for this job, candidate and
     resume is used. With no match at all there is nothing to ground a letter
@@ -166,19 +164,19 @@ def discover_jobs(
     body: DiscoveryRequest,
     session: Session = Depends(get_db),
     registry=Depends(get_registry),
-    user: User = Depends(get_current_user),
+    candidate: Candidate = Depends(get_current_candidate),
 ) -> AgentRunOut:
-    """Run authenticated, quota-limited discovery for one search request."""
-    user_id = user.id
+    """Run local, quota-limited discovery for one search request."""
+    local_id = candidate.id
+    # The UTC day lets a repeated search find new postings once per day.
     account_key = sha256(
-        f"{user_id}:{discovery_idempotency_key(body)}".encode("utf-8")
+        f"{local_id}:{utc_day().isoformat()}:{discovery_idempotency_key(body)}".encode("utf-8")
     ).hexdigest()
     settings = get_settings()
     try:
         reserve_provider_attempt(
             session,
-            user_id=user_id,
-            user_limit=settings.discovery_daily_user_limit,
+            local_limit=settings.discovery_daily_local_limit,
             global_limit=settings.discovery_daily_global_limit,
         )
     except DailyProviderLimitExceeded:
@@ -203,7 +201,6 @@ def analyze_job(
     job_id: UUID,
     session: Session = Depends(get_db),
     registry=Depends(get_registry),
-    _user: User = Depends(get_current_user),
 ) -> AgentRunOut:
     """Run job analysis for one job; repeat calls reuse the stored result."""
     _require_job(session, job_id)

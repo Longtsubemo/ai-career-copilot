@@ -1,10 +1,10 @@
 """An agent request may only touch the run it created or resumed.
 
 The runtime's shared ``claim_next`` claims the oldest pending run of an agent
-across every caller. The HTTP surface must not use it: a request from one
-account must never claim, execute, leak or overwrite a run that belongs to a
-different account. These tests seed a foreign pending run and prove an
-authenticated request leaves it completely untouched.
+across every caller. The HTTP surface must not use it: a request must never
+claim, execute, leak or overwrite a different pending run. These tests seed a
+pending run for the local profile and prove a request for another job leaves
+that run completely untouched.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from tests.api.support import (
     build_candidate_with_resume,
     build_full_world,
     build_job,
-    login,
 )
 from tests.fake_clients import FakeGeminiClient
 
@@ -53,10 +52,8 @@ def test_a_request_never_executes_another_candidates_pending_run(
 
     world = build_job(session, company_name="Globex")
     add_analysis(session, world.job.id)
-    actor = build_candidate_with_resume(session)
+    actor = victim
     client = client_factory(gemini=FakeGeminiClient(MATCH))
-    login(client, actor.candidate.user)
-
     response = client.post(f"/api/jobs/{world.job.id}/match")
 
     assert response.status_code == 200
@@ -78,10 +75,8 @@ def test_a_request_never_returns_another_candidates_pending_output(
 
     world = build_job(session, company_name="Globex")
     add_analysis(session, world.job.id)
-    actor = build_candidate_with_resume(session)
+    actor = victim
     client = client_factory(gemini=FakeGeminiClient(MATCH))
-    login(client, actor.candidate.user)
-
     client.post(f"/api/jobs/{world.job.id}/match")
 
     runs = session.execute(select(AgentRun)).scalars().all()

@@ -9,7 +9,6 @@ reject unknown fields so a typo becomes a 422 instead of a silent no-op.
 
 from __future__ import annotations
 
-import re
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
@@ -25,44 +24,11 @@ from app.models.enums import (
 )
 from app.services.job_verification import VerificationOutcome
 
-_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def _validate_email(value: str) -> str:
-    cleaned = value.strip()
-    if not _EMAIL_PATTERN.match(cleaned):
-        raise ValueError("enter a valid email address")
-    return cleaned
-
-
-class CandidateCreateRequest(BaseModel):
-    """Body for creating the single candidate profile."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=255)
-    headline: str | None = Field(default=None, max_length=255)
-    location: str | None = Field(default=None, max_length=255)
-    years_of_experience: float | None = Field(default=None, ge=0, le=100)
-    seniority: str | None = Field(default=None, max_length=100)
-    skills: list[str] | None = None
-    summary: str | None = None
-
-    @field_validator("name")
-    @classmethod
-    def _name_is_not_blank(cls, value: str) -> str:
-        cleaned = " ".join(value.split())
-        if not cleaned:
-            raise ValueError("name must not be empty")
-        return cleaned
-
-
 class CandidateUpdateRequest(BaseModel):
-    """Body for partially updating the authenticated candidate profile.
+    """Body for partially updating the local profile.
 
     Only user-editable profile fields are declared, so identity and
-    ownership columns (``id``, ``user_id``, timestamps) can never be
-    written through this schema. An empty body is rejected, and ``name``
+    timestamps can never be written through this schema. An empty body is rejected, and ``name``
     cannot be nulled because the column is required.
     """
 
@@ -329,42 +295,3 @@ class ApplicationListOut(BaseModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1)
     offset: int = Field(ge=0)
-
-
-class RegisterRequest(BaseModel):
-    """Body for creating an account and its candidate profile."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=128)
-    name: str | None = Field(default=None, max_length=255)
-
-    @field_validator("email")
-    @classmethod
-    def _email_is_valid(cls, value: str) -> str:
-        return _validate_email(value)
-
-
-class LoginRequest(BaseModel):
-    """Body for exchanging credentials for a session."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=1, max_length=128)
-
-    @field_validator("email")
-    @classmethod
-    def _email_is_valid(cls, value: str) -> str:
-        return _validate_email(value)
-
-
-class UserOut(BaseModel):
-    """The authenticated account as exposed by the API."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    email: str
-    created_at: datetime
