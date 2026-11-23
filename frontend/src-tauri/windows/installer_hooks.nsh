@@ -38,7 +38,7 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -File "$INSTDIR\resources\installer\close_running_app.ps1" "$INSTDIR\ai-career-copilot-desktop.exe"' $0
+  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\installer\close_running_app.ps1" "$INSTDIR\ai-career-copilot-desktop.exe"' $0
   ${If} $0 != 0
     MessageBox MB_ICONSTOP|MB_OK "AI Career Copilot did not close cleanly. Close the app and run the installer again. Your saved data was preserved."
     Abort
