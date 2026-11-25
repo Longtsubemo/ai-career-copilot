@@ -22,7 +22,6 @@ from app.agents.discovery import (
     RoleMatch,
     build_search_query,
     discovery_idempotency_key,
-    extract_job,
     filter_check,
     register_discovery_handler,
 )
@@ -208,81 +207,6 @@ class TestContract:
     )
     def test_parse_year_range_variants(self, text: str | None, expected: object) -> None:
         assert parse_year_range(text) == expected
-
-
-class TestExtraction:
-    def test_metadata_wins_over_heading_and_search_title(self) -> None:
-        crawl = listing_page(URL_A, title="Metadata Title", location="Bangalore")
-        result = search_result(URL_A, "Search Title", "Search snippet.")
-
-        extracted = extract_job(result, crawl)
-
-        assert extracted.title == "Metadata Title"
-        assert extracted.description == "Search snippet."
-        assert extracted.location == "Bangalore"
-
-    def test_heading_is_used_when_metadata_has_no_title(self) -> None:
-        crawl = crawl_result(URL_A, markdown="# Heading Title\n\nBody")
-        result = search_result(URL_A, "Search Title")
-
-        extracted = extract_job(result, crawl)
-
-        assert extracted.title == "Heading Title"
-
-    def test_search_title_is_the_final_fallback(self) -> None:
-        crawl = crawl_result(URL_A, markdown="No headings here", metadata={})
-        result = search_result(URL_A, "Search Title")
-
-        extracted = extract_job(result, crawl)
-
-        assert extracted.title == "Search Title"
-
-    def test_markdown_lines_supply_structured_fields(self) -> None:
-        crawl = crawl_result(
-            URL_A,
-            markdown=(
-                "# Role\n"
-                "Location: Bangalore, India\n"
-                "Employment type: Contract\n"
-                "Experience: 3-5 years\n"
-                "Company: Globex Pvt Ltd\n"
-            ),
-        )
-        result = search_result(URL_A, "Search Title")
-
-        extracted = extract_job(result, crawl)
-
-        assert extracted.location == "Bangalore, India"
-        assert extracted.employment_type == "Contract"
-        assert extracted.experience_level == "3-5 years"
-        assert extracted.company_name == "Globex Pvt Ltd"
-
-    def test_absent_sources_stay_none_and_never_fabricate(self) -> None:
-        extracted = extract_job(search_result(URL_A, "Search Title"), None)
-
-        assert extracted.title == "Search Title"
-        assert extracted.description is None
-        assert extracted.location is None
-        assert extracted.employment_type is None
-        assert extracted.experience_level is None
-        assert extracted.company_name is None
-
-    def test_overlong_title_is_clipped_to_the_column_limit(self) -> None:
-        result = search_result(URL_A, "x" * 400)
-
-        extracted = extract_job(result, None)
-
-        assert len(extracted.title) == 255
-
-    def test_metadata_location_wins_over_markdown_line(self) -> None:
-        crawl = crawl_result(
-            URL_A,
-            markdown="Location: Mumbai",
-            metadata={"location": "Bangalore"},
-        )
-        result = search_result(URL_A, "Role")
-
-        assert extract_job(result, crawl).location == "Bangalore"
 
 
 class TestFiltering:

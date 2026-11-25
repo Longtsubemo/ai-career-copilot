@@ -152,7 +152,8 @@ clients without sharing a global registry.
 - Discovery is deterministic. Search results are pointers, not vacancy
   evidence. The source registry admits reviewed direct-job URLs; scraped page
   evidence is validated before a job is saved. An identical search reuses the
-  run from the same UTC day and searches again on a later day.
+  run from the same UTC day and searches again on a later day. Replaying a
+  succeeded run uses no daily discovery quota.
 - Job Analysis reads saved job fields and asks Gemini for structured analysis.
 - Job Matching verifies that the resume belongs to the local candidate and
   requires a usable saved job analysis. It records the evidence used and does

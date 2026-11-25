@@ -167,13 +167,30 @@ def test_daily_user_limit_rejects_before_search(client_factory, session, monkeyp
     searxng, firecrawl = _fakes()
     client = client_factory(searxng=searxng, firecrawl=firecrawl)
     first = client.post("/api/jobs/discover", json=REQUEST)
-    second = client.post("/api/jobs/discover", json=REQUEST)
+    second = client.post("/api/jobs/discover", json={**REQUEST, "role": "ML Engineer"})
 
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json() == {"detail": "daily discovery limit reached"}
     assert len(searxng.queries) == 2
     assert len(firecrawl.requested) == 1
+    assert session.scalar(select(func.sum(DiscoveryDailyUsage.attempts))) == 2
+
+
+def test_same_day_replay_costs_no_quota(client_factory, session, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.routes.agents.get_settings",
+        lambda: Settings(_env_file=None, discovery_daily_local_limit=1),
+    )
+    searxng, firecrawl = _fakes()
+    client = client_factory(searxng=searxng, firecrawl=firecrawl)
+    first = client.post("/api/jobs/discover", json=REQUEST)
+    replay = client.post("/api/jobs/discover", json=REQUEST)
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
+    assert len(searxng.queries) == 2
     assert session.scalar(select(func.sum(DiscoveryDailyUsage.attempts))) == 2
 
 
@@ -209,7 +226,9 @@ def test_global_daily_limit_is_shared_between_users(client_factory, session, mon
     second_search, second_crawl = _fakes()
     second_client = client_factory(searxng=second_search, firecrawl=second_crawl)
     assert first_client.post("/api/jobs/discover", json=REQUEST).status_code == 200
-    limited = second_client.post("/api/jobs/discover", json=REQUEST)
+    limited = second_client.post(
+        "/api/jobs/discover", json={**REQUEST, "role": "ML Engineer"}
+    )
 
     assert limited.status_code == 429
     assert len(first_search.queries) == 2
