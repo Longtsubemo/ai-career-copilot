@@ -30,7 +30,6 @@ from app.agents.discovery.relevance import (
     role_family,
 )
 from app.clients.firecrawl import CrawlResult
-from app.clients.searxng import SearchResult
 
 TITLE_MAX = 255
 LOCATION_MAX = 255
@@ -342,46 +341,6 @@ def _date_posted(crawl: CrawlResult | None, markdown: str | None) -> date | None
         if match:
             raw = match.group(1).strip()
     return parse_posted_date(raw)
-
-
-def extract_job(result: SearchResult, crawl: CrawlResult | None) -> ExtractedJob:
-    """Extract job fields from a search hit and, when available, its page.
-
-    This compatibility helper may use search metadata as a fallback. It is not
-    a vacancy validator and must not be used as persistence input; the agent
-    uses :func:`extract_page_evidence` and :func:`validate_page_evidence`.
-
-    Priority is crawled-page metadata first, then deterministic markdown
-    line patterns, then the search snippet. Values the sources do not
-    provide stay ``None``; nothing is fabricated. The search title always
-    yields a usable ``title``.
-    """
-    markdown = crawl.markdown if crawl is not None else None
-
-    title = _meta(crawl, "title") or _first_heading(markdown) or result.title
-    description = _meta(crawl, "description") or result.content
-    location = _meta(crawl, "location") or _line_field(markdown, "location")
-    employment_type = _meta(crawl, "employment_type") or _line_field(
-        markdown, "employment_type"
-    )
-    experience_level = _meta(crawl, "experience_level") or _line_field(
-        markdown, "experience_level"
-    )
-    company_name = _meta(crawl, "company_name") or _line_field(
-        markdown, "company_name"
-    )
-    date_posted = _date_posted(crawl, markdown)
-
-    return ExtractedJob(
-        title=_clip(title, TITLE_MAX) or result.title[:TITLE_MAX],
-        job_url=result.url,
-        description=_clip(description, DESCRIPTION_MAX),
-        location=_clip(location, LOCATION_MAX),
-        employment_type=_clip(employment_type, EMPLOYMENT_TYPE_MAX),
-        experience_level=_clip(experience_level, EXPERIENCE_LEVEL_MAX),
-        company_name=_clip(company_name, COMPANY_NAME_MAX),
-        date_posted=date_posted,
-    )
 
 
 def _clean_page_text(value: str) -> str:

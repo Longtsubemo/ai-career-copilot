@@ -51,8 +51,10 @@ from app.api.deps import (
 from app.api.schemas import AgentRunOut, CoverLetterHttpRequest, MatchHttpRequest
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.models.agent_run import AgentRun
 from app.models.candidate import Candidate
 from app.models.document import Document
+from app.models.enums import RunStatus
 from app.models.job import Job
 from app.models.match import Match
 from app.services.discovery_quota import (
@@ -172,25 +174,35 @@ def discover_jobs(
     account_key = sha256(
         f"{local_id}:{utc_day().isoformat()}:{discovery_idempotency_key(body)}".encode("utf-8")
     ).hexdigest()
-    settings = get_settings()
-    try:
-        reserve_provider_attempt(
-            session,
-            local_limit=settings.discovery_daily_local_limit,
-            global_limit=settings.discovery_daily_global_limit,
+    idempotency_key = f"job_discovery:{account_key}"
+    # A succeeded run is replayed from storage with no provider call, so it
+    # costs no quota. Failed or pending runs may call providers again.
+    replay = session.scalar(
+        select(AgentRun.id).where(
+            AgentRun.idempotency_key == idempotency_key,
+            AgentRun.status == RunStatus.succeeded,
         )
-    except DailyProviderLimitExceeded:
-        raise HTTPException(
-            status_code=429, detail="daily discovery limit reached"
-        ) from None
-    # This commit makes the attempt durable before any search or scrape call,
-    # including calls that later fail.
-    session.commit()
+    )
+    if replay is None:
+        settings = get_settings()
+        try:
+            reserve_provider_attempt(
+                session,
+                local_limit=settings.discovery_daily_local_limit,
+                global_limit=settings.discovery_daily_global_limit,
+            )
+        except DailyProviderLimitExceeded:
+            raise HTTPException(
+                status_code=429, detail="daily discovery limit reached"
+            ) from None
+        # This commit makes the attempt durable before any search or scrape
+        # call, including calls that later fail.
+        session.commit()
     run = run_agent_now(
         session,
         registry=registry,
         agent_name=DISCOVERY_AGENT_NAME,
-        idempotency_key=f"job_discovery:{account_key}",
+        idempotency_key=idempotency_key,
         payload=body.model_dump(mode="json"),
     )
     return agent_run_response(run)

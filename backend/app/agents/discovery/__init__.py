@@ -22,7 +22,6 @@ from app.agents.discovery.contract import (
 from app.agents.discovery.extract import (
     ExtractedJob,
     FilterDecision,
-    extract_job,
     filter_check,
     parse_posted_date,
 )
@@ -60,7 +59,6 @@ __all__ = [
     "classify_page",
     "classify_url",
     "discovery_idempotency_key",
-    "extract_job",
     "filter_check",
     "has_closure_evidence",
     "has_usable_content",
